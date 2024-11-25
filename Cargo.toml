@@ -1,0 +1,12 @@
+[package]
+name = "hypermash"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = "4.3"
+needletail = "0.6.0"
+rayon = "1.5"
+crossbeam-channel = "0.5"
+xxhash-rust = "0.8"
+hyperminhash = "0.1.3"
