@@ -14,6 +14,9 @@ use std::thread;
 use hyperminhash::Sketch;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    
+    println!("\n ************** initializing logger *****************\n");
+    let _ = env_logger::Builder::from_default_env().init();
     // Set up the command-line arguments
     let matches = Command::new("Genome Sketching via HyperMinhash")
         .version("0.1.0")
