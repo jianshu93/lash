@@ -1,20 +1,18 @@
 use clap::{Arg, ArgAction, Command};
 use needletail::{parse_fastx_file, Sequence};
 use needletail::kmer::Kmers;
-use needletail::sequence::canonical; // Import the canonical function
+use needletail::sequence::canonical;
 use rayon::prelude::*;
 use crossbeam_channel::bounded;
 use std::error::Error;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Write}; // Import Write trait for output
+use std::io::{BufRead, BufReader, Write};
 use std::thread;
-
-// Include your HyperMinHash implementation here or in a separate module
 use hyperminhash::Sketch;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    
+
     println!("\n ************** initializing logger *****************\n");
     let _ = env_logger::Builder::from_default_env().init();
     // Set up the command-line arguments
@@ -244,6 +242,5 @@ fn main() -> Result<(), Box<dyn Error>> {
             )?;
         }
     }
-
     Ok(())
 }
