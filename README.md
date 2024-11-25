@@ -47,6 +47,9 @@ ls ./data/*.fasta > ref_list_strep.txt
 hypermash --query_file ./query_list_strep.txt -r ref_list_strep.txt -k 16 -o dist.txt
 ```
 
+## Output
+
+Output format is the same with Mash, first column query, second column reference name， third column Mash distance
 
 ## References
 1. Yu YW, Weber GM. Hyperminhash: Minhash in loglog space. IEEE Transactions on Knowledge and Data Engineering. 2020 Mar 17;34(1):328-39.
