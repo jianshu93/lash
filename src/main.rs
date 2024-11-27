@@ -12,9 +12,6 @@ use std::thread;
 use hyperminhash::Sketch;
 
 fn main() -> Result<(), Box<dyn Error>> {
-
-    println!("\n ************** initializing logger *****************\n");
-    let _ = env_logger::Builder::from_default_env().init();
     // Set up the command-line arguments
     let matches = Command::new("Genome Sketching via HyperMinhash")
         .version("0.1.0")
@@ -115,7 +112,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let local_sketch = batch
                     .par_iter()
                     .map(|seq| {
-                        // Allocate sketch on the heap, allocating on stack will be problematic
+                        // Allocate sketch on the heap
                         let mut sketch = Box::new(Sketch::default());
                         let kmer_length_u8 = kmer_length as u8;
                         for kmer in Kmers::new(seq, kmer_length_u8) {
@@ -210,15 +207,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         })
         .collect();
 
-    // Open the output file for writing
-    let mut output = File::create(output_file)?;
+    // Generate all pairs of query and reference sketches
+    let pairs: Vec<(&String, &Sketch, &String, &Sketch)> = query_sketches
+        .iter()
+        .flat_map(|(q_name, q_sketch)| {
+            reference_sketches.iter().map(move |(r_name, r_sketch)| {
+                (q_name, q_sketch, r_name, r_sketch)
+            })
+        })
+        .collect();
 
-    // Write header line
-    writeln!(output, "Query\tReference\tDistance")?;
-
-    // Compare each query sketch with each reference sketch
-    for (query_name, query_sketch) in &query_sketches {
-        for (reference_name, reference_sketch) in &reference_sketches {
+    // Compute similarities and distances in parallel
+    let results: Vec<(String, String, f64)> = pairs
+        .par_iter()
+        .map(|&(query_name, query_sketch, reference_name, reference_sketch)| {
             let similarity = query_sketch.similarity(reference_sketch);
 
             // Avoid division by zero and log of zero
@@ -234,13 +236,20 @@ fn main() -> Result<(), Box<dyn Error>> {
             let fraction = numerator / denominator;
             let distance = -fraction.ln() / (kmer_length as f64);
 
-            // Write result to the output file
-            writeln!(
-                output,
-                "{}\t{}\t{:.6}",
-                query_name, reference_name, distance
-            )?;
-        }
+            (query_name.clone(), reference_name.clone(), distance)
+        })
+        .collect();
+
+    // Open the output file for writing
+    let mut output = File::create(output_file)?;
+
+    // Write header line
+    writeln!(output, "Query\tReference\tDistance")?;
+
+    // Write the results
+    for (query_name, reference_name, distance) in results {
+        writeln!(output, "{}\t{}\t{:.6}", query_name, reference_name, distance)?;
     }
+
     Ok(())
 }
