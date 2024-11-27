@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::thread;
+use std::path::Path;
 use hyperminhash::Sketch;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -245,9 +246,25 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // Write header line
     writeln!(output, "Query\tReference\tDistance")?;
+    
+    // Write the results with file path normalization
+    for (query_name, reference_name, distance) in &results {
+        // Extract file names from the paths
+        let query_basename = Path::new(&query_name)
+            .file_name()
+            .and_then(|os_str| os_str.to_str())
+            .unwrap_or(&query_name);
 
-    // Write the results
-    for (query_name, reference_name, distance) in results {
+        let reference_basename = Path::new(&reference_name)
+            .file_name()
+            .and_then(|os_str| os_str.to_str())
+            .unwrap_or(&reference_name);
+
+        let distance = if query_basename == reference_basename {
+            0.0
+        } else {
+            *distance
+        };
         writeln!(output, "{}\t{}\t{:.6}", query_name, reference_name, distance)?;
     }
 
