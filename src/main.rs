@@ -13,15 +13,18 @@ use std::path::Path;
 use hyperminhash::Sketch;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    // Initialize logger
+    println!("\n ************** initializing logger *****************\n");
+    env_logger::Builder::from_default_env().init();
     // Set up the command-line arguments
     let matches = Command::new("Genome Sketching via HyperMinhash")
         .version("0.1.0")
-        .about("Fast and Memory Efficient Genome Sketching via HyperMinhash")
+        .about("Fast and Memory Efficient Genome/Metagenome Sketching via HyperMinhash")
         .arg(
             Arg::new("query_files")
                 .short('q')
                 .long("query_file")
-                .help("File containing list of query FASTA files")
+                .help("File containing list of query FASTA files, .gz supported")
                 .required(true)
                 .action(ArgAction::Set),
         )
@@ -29,7 +32,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             Arg::new("reference_files")
                 .short('r')
                 .long("ref_file")
-                .help("File containing list of reference FASTA files")
+                .help("File containing list of reference FASTA files, .gz supported")
                 .required(true)
                 .action(ArgAction::Set),
         )
@@ -226,7 +229,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             // Avoid division by zero and log of zero
             let adjusted_similarity = if similarity <= 0.0 {
-                1e-10 // Small positive number to avoid log(0)
+                std::f64::EPSILON // Small positive number to avoid log(0)
             } else {
                 similarity
             };
