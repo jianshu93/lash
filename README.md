@@ -1,5 +1,4 @@
 [![Latest Version](https://img.shields.io/crates/v/hypermash?style=for-the-badge&color=mediumpurple&logo=rust)](https://crates.io/crates/hypermash)
-[![docs.rs](https://img.shields.io/docsrs/hypermash?style=for-the-badge&logo=docs.rs&color=mediumseagreen)](https://docs.rs/hypermash/latest/hypermash/)
 
 # Fast and Memory Efficient Genome/Metagenome Sketching via HyperMinHash
 
