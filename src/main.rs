@@ -11,6 +11,8 @@ use std::io::{BufRead, BufReader, Write, BufWriter};
 use std::thread;
 use std::path::Path;
 use hyperminhash::Sketch;
+use serde_json::{to_writer_pretty};
+
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Initialize logger
@@ -165,20 +167,23 @@ fn main() -> Result<(), Box<dyn Error>> {
             })
             .collect();
 
-            let name_file: String = format!("{}_names.bin", sketch_file_name.clone());
-            let sketch_list = File::create(name_file)?;
-            let mut list_writer = BufWriter::new(sketch_list);
-            let sketch_file_name: String = format!("{}_sketch.bin", sketch_file_name.clone());
-            let sketch = File::create(sketch_file_name)?;
-            let mut sketch_writer = BufWriter::new(sketch);
+            // put names into a json file
+            let mut names: Vec<String> = sketches.keys().cloned().collect();
+            to_writer_pretty(
+                &File::create(format!("{}_names.json", sketch_file_name.clone()))?,
+                &names
+            )?;
 
-            // serialize query sketches
-            for (string, sketch) in sketches {
-                writeln!(list_writer, "{}", string)?;
+            // serialize sketches
+            let file_name = format!("{}_sketches.bin",  sketch_file_name.clone());
+            let mut sketch_writer = BufWriter::new(File::create(file_name)?);
+
+            for name in &names {
+                let sketch = &sketches[name];
                 sketch.save(&mut sketch_writer)?;
             }
-            println!("Serialized sketches");
 
+            println!("Serialized sketches.");
             Ok(())
         }
         Some(("distance", s_matches)) => {
@@ -205,11 +210,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             fn read_names(file_name: &str) -> std::io::Result<Vec<String>> {
                 let file = File::open(file_name).expect(&format!("Error opening {}", file_name));
                 let reader = BufReader::new(file);
-                let mut names = Vec::new();
-                for line in reader.lines() {
-                    let name = line?;
-                    names.push(name);
-                }
+                let names: Vec<String> = serde_json::from_reader(reader)?;
                 Ok(names)
             }
 
@@ -310,7 +311,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 };
                 writeln!(output, "{}\t{}\t{:.6}", query_name, reference_name, distance)?;
             }
-        
+            println!("Distances computed.");
             Ok(())
         }
         _ => {
