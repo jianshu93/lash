@@ -3,6 +3,7 @@ use needletail::{parse_fastx_file, Sequence};
 use needletail::kmer::Kmers;
 use needletail::sequence::canonical;
 use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
 use crossbeam_channel::bounded;
 use std::error::Error;
 use std::collections::HashMap;
@@ -38,6 +39,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .short('k')
                 .long("kmer")
                 .help("Length of the kmer")
+                .required(true)
+                .value_parser(clap::value_parser!(usize))
+                .action(ArgAction::Set)
+            )
+            .arg(
+                Arg::new("threads")
+                .short('t')
+                .long("threads")
+                .help("Number of threads to use")
                 .required(true)
                 .value_parser(clap::value_parser!(usize))
                 .action(ArgAction::Set)
@@ -83,6 +93,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .required(true)
                 .action(ArgAction::Set)
             )
+            .arg(
+                Arg::new("threads")
+                .short('t')
+                .long("threads")
+                .help("Number of threads to use")
+                .required(true)
+                .value_parser(clap::value_parser!(usize))
+                .action(ArgAction::Set)
+            )
         )
         .get_matches();
 
@@ -90,7 +109,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some(("sketch", s_matches)) => {
             let sketch_file_name = s_matches.get_one::<String>("sketch").expect("required");
             let kmer_length: usize = *s_matches.get_one::<usize>("kmer_length").unwrap();
-            
+            let threads: usize = *s_matches.get_one::<usize>("threads").unwrap();
+
             // Read the lists of query and reference files
             let sketch_file = File::open(sketch_file_name)?;
             let sketch_reader = BufReader::new(sketch_file);
@@ -99,6 +119,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .filter_map(|line| line.ok())
                 .filter(|line| !line.trim().is_empty())
                 .collect();
+
+            ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build_global()
+            .unwrap();
 
             // Process files and create sketches
             let sketches: HashMap<String, Sketch> = sketch_files
@@ -205,6 +230,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             let kmer_length: usize = *s_matches.get_one::<usize>("kmer_length").unwrap();
 
             let output_file: &String = s_matches.get_one::<String>("output_file").expect("required");
+            let threads: usize = *s_matches.get_one::<usize>("threads").unwrap();
+
+            ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build_global()
+            .unwrap();
 
             // function to read in names of the genomes into a vector of names
             fn read_names(file_name: &str) -> std::io::Result<Vec<String>> {
