@@ -1,22 +1,44 @@
 use clap::{Arg, ArgAction, Command};
-use needletail::{parse_fastx_file, Sequence};
-use needletail::kmer::Kmers;
-use needletail::sequence::canonical;
-use rayon::prelude::*;
 use crossbeam_channel::bounded;
-use std::error::Error;
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
-use std::thread;
-use std::path::Path;
 use hyperminhash::Sketch;
+use needletail::parse_fastx_file;
+use rayon::prelude::*;
+use rayon::ThreadPoolBuilder;
+use std::{
+    collections::HashMap,
+    error::Error,
+    fs::File,
+    io::{BufRead, BufReader, Write},
+    path::Path,
+    thread,
+};
+
+use kmerutils::base::{
+    kmergenerator::{KmerSeqIterator, KmerSeqIteratorT},
+    sequence::Sequence as KSeq,
+    CompressedKmerT, Kmer16b32bit, Kmer32bit, Kmer64bit,
+};
+use kmerutils::base::KmerT;
+
+
+fn filter_out_n(seq: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(seq.len());
+    for &c in seq {
+        if matches!(c, b'A' | b'C' | b'T' | b'G') {
+            out.push(c);
+        }
+    }
+    out
+}
+
+fn mask_bits(v: u64, k: usize) -> u64 {
+    let b = 2 * k as u32;
+    if b == 64 { v } else { v & ((1u64 << b) - 1) }
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
-    // Initialize logger
-    println!("\n ************** initializing logger *****************\n");
     env_logger::Builder::from_default_env().init();
-    // Set up the command-line arguments
+
     let matches = Command::new("Genome Sketching via HyperMinhash")
         .version("0.1.0")
         .about("Fast and Memory Efficient Genome/Metagenome Sketching via HyperMinhash")
@@ -24,7 +46,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             Arg::new("query_files")
                 .short('q')
                 .long("query_file")
-                .help("File containing list of query FASTA files, .gz supported")
+                .help("List of query genome files, one per line with .gz support")
                 .required(true)
                 .action(ArgAction::Set),
         )
@@ -32,7 +54,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             Arg::new("reference_files")
                 .short('r')
                 .long("ref_file")
-                .help("File containing list of reference FASTA files, .gz supported")
+                .help("List of reference genome files, one per line with .gz support")
                 .required(true)
                 .action(ArgAction::Set),
         )
@@ -40,8 +62,18 @@ fn main() -> Result<(), Box<dyn Error>> {
             Arg::new("kmer_length")
                 .short('k')
                 .long("kmer")
-                .help("Length of k-mers")
+                .help("Kmer length to use for sketching")
                 .required(true)
+                .value_parser(clap::value_parser!(usize))
+                .action(ArgAction::Set),
+        )
+        .arg(
+            Arg::new("threads")
+                .short('t')
+                .long("threads")
+                .value_name("THREADS")
+                .help("Number of threads to use in parallel")
+                .default_value("1")
                 .value_parser(clap::value_parser!(usize))
                 .action(ArgAction::Set),
         )
@@ -49,7 +81,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             Arg::new("output_file")
                 .short('o')
                 .long("output")
-                .help("Output file to write results")
                 .required(true)
                 .action(ArgAction::Set),
         )
@@ -59,217 +90,168 @@ fn main() -> Result<(), Box<dyn Error>> {
     let reference_files_list = matches.get_one::<String>("reference_files").unwrap();
     let kmer_length: usize = *matches.get_one::<usize>("kmer_length").unwrap();
     let output_file = matches.get_one::<String>("output_file").unwrap();
+    let threads = *matches.get_one::<usize>("threads").unwrap();
+    // Build global threadpool
+    ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+        .unwrap();
+    
+    let read_paths = |p: &str| -> Vec<String> {
+        BufReader::new(File::open(p).unwrap())
+            .lines()
+            .filter_map(Result::ok)
+            .filter(|l| !l.trim().is_empty())
+            .collect()
+    };
+    let query_files = read_paths(query_files_list);
+    let reference_files = read_paths(reference_files_list);
 
-    // Read the lists of query and reference files
-    let query_file = File::open(query_files_list)?;
-    let query_reader = BufReader::new(query_file);
-    let query_files: Vec<String> = query_reader
-        .lines()
-        .filter_map(|line| line.ok())
-        .filter(|line| !line.trim().is_empty())
-        .collect();
-
-    let reference_file = File::open(reference_files_list)?;
-    let reference_reader = BufReader::new(reference_file);
-    let reference_files: Vec<String> = reference_reader
-        .lines()
-        .filter_map(|line| line.ok())
-        .filter(|line| !line.trim().is_empty())
-        .collect();
-
-    // Process query files and create sketches
     let query_sketches: HashMap<String, Sketch> = query_files
         .par_iter()
         .map(|file_name| {
-            // Clone the file name for ownership in the closure
             let file_name = file_name.clone();
-
-            // Process the file and create a sketch
             let mut reader = parse_fastx_file(&file_name).expect("Failed to parse file");
-            let (sender, receiver) = bounded(10); // Channel with capacity 10
+            let (sender, receiver) = bounded(10);
 
-            // Spawn a thread to read sequences and send batches
             let reader_thread = thread::spawn(move || {
                 let mut batch = Vec::new();
                 while let Some(result) = reader.next() {
                     if let Ok(seqrec) = result {
                         batch.push(seqrec.seq().to_vec());
                         if batch.len() == 5000 {
-                            if sender.send(batch.clone()).is_err() {
-                                break; // Receiver has hung up
-                            }
+                            if sender.send(batch.clone()).is_err() { break }
                             batch.clear();
                         }
                     }
                 }
-                if !batch.is_empty() {
-                    let _ = sender.send(batch); // Send remaining batch
-                }
+                if !batch.is_empty() { let _ = sender.send(batch); }
             });
 
-            // Initialize an empty Sketch allocated on the heap
             let mut global_sketch = Box::new(Sketch::default());
 
-            // Process the batches
             for batch in receiver {
-                // Process the batch in parallel
-                let local_sketch = batch
-                    .par_iter()
-                    .map(|seq| {
-                        // Allocate sketch on the heap
-                        let mut sketch = Box::new(Sketch::default());
-                        let kmer_length_u8 = kmer_length as u8;
-                        for kmer in Kmers::new(seq, kmer_length_u8) {
-                            let kmer_bytes = canonical(kmer); // Use canonical function
-                            sketch.add_bytes(&kmer_bytes);
+                let local_sketch = batch.par_iter().map(|seq| {
+                    let seq_vec = filter_out_n(seq);
+                    if seq_vec.is_empty() { return Box::new(Sketch::default()); }
+                    let mut sketch = Box::new(Sketch::default());
+                    let kseq = KSeq::new(&seq_vec, 2);
+                    if kmer_length <= 14 {
+                        let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                            sketch.add_bytes(&(masked as u32).to_le_bytes());
                         }
-                        sketch
-                    })
-                    .reduce(
-                        || Box::new(Sketch::default()),
-                        |mut a, b| {
-                            a.union(&b);
-                            a
-                        },
-                    );
+                    } else if kmer_length == 16 {
+                        let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                            sketch.add_bytes(&(masked as u32).to_le_bytes());
+                        }
+                    } else if kmer_length <= 32 {
+                        let mut it = KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(canon.get_compressed_value(), kmer_length);
+                            sketch.add_bytes(&masked.to_le_bytes());
+                        }
+                    } else {
+                        panic!("k-mer length must be 1–32, k=15 is not supported");
+                    }
+                    sketch
+                })
+                .reduce(|| Box::new(Sketch::default()), |mut a, b| { a.union(&b); a });
 
-                // Merge the local sketch into the global sketch
                 global_sketch.union(&local_sketch);
             }
-
-            // Wait for the reader thread to finish
-            reader_thread.join().expect("Reader thread panicked");
-
+            reader_thread.join().unwrap();
             (file_name, *global_sketch)
         })
         .collect();
 
-    // Process reference files and create sketches
     let reference_sketches: HashMap<String, Sketch> = reference_files
         .par_iter()
         .map(|file_name| {
-            // Clone the file name for ownership in the closure
             let file_name = file_name.clone();
-
-            // Process the file and create a sketch
             let mut reader = parse_fastx_file(&file_name).expect("Failed to parse file");
-            let (sender, receiver) = bounded(10); // Channel with capacity 10
-
-            // Spawn a thread to read sequences and send batches
+            let (sender, receiver) = bounded(10);
             let reader_thread = thread::spawn(move || {
                 let mut batch = Vec::new();
                 while let Some(result) = reader.next() {
                     if let Ok(seqrec) = result {
                         batch.push(seqrec.seq().to_vec());
                         if batch.len() == 5000 {
-                            if sender.send(batch.clone()).is_err() {
-                                break; // Receiver has hung up
-                            }
+                            if sender.send(batch.clone()).is_err() { break }
                             batch.clear();
                         }
                     }
                 }
-                if !batch.is_empty() {
-                    let _ = sender.send(batch); // Send remaining batch
-                }
+                if !batch.is_empty() { let _ = sender.send(batch); }
             });
 
-            // Initialize an empty Sketch allocated on the heap
             let mut global_sketch = Box::new(Sketch::default());
-
-            // Process the batches
             for batch in receiver {
-                // Process the batch in parallel
-                let local_sketch = batch
-                    .par_iter()
-                    .map(|seq| {
-                        // Allocate sketch on the heap
-                        let mut sketch = Box::new(Sketch::default());
-                        let kmer_length_u8 = kmer_length as u8;
-                        for kmer in Kmers::new(seq, kmer_length_u8) {
-                            let kmer_bytes = canonical(kmer); // Use canonical function
-                            sketch.add_bytes(&kmer_bytes);
+                let local_sketch = batch.par_iter().map(|seq| {
+                    let seq_vec = filter_out_n(seq);
+                    if seq_vec.is_empty() { return Box::new(Sketch::default()); }
+                    let mut sketch = Box::new(Sketch::default());
+                    let kseq = KSeq::new(&seq_vec, 2);
+                    if kmer_length <= 14 {
+                        let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                            sketch.add_bytes(&(masked as u32).to_le_bytes());
                         }
-                        sketch
-                    })
-                    .reduce(
-                        || Box::new(Sketch::default()),
-                        |mut a, b| {
-                            a.union(&b);
-                            a
-                        },
-                    );
-
-                // Merge the local sketch into the global sketch
+                    } else if kmer_length == 16 {
+                        let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                            sketch.add_bytes(&(masked as u32).to_le_bytes());
+                        }
+                    } else if kmer_length <= 32 {
+                        let mut it = KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(canon.get_compressed_value(), kmer_length);
+                            sketch.add_bytes(&masked.to_le_bytes());
+                        }
+                    } else {
+                        panic!("k-mer length must be 1–32");
+                    }
+                    sketch
+                })
+                .reduce(|| Box::new(Sketch::default()), |mut a, b| { a.union(&b); a });
                 global_sketch.union(&local_sketch);
             }
-
-            // Wait for the reader thread to finish
-            reader_thread.join().expect("Reader thread panicked");
-
+            reader_thread.join().unwrap();
             (file_name, *global_sketch)
         })
         .collect();
 
-    // Generate all pairs of query and reference sketches
-    let pairs: Vec<(&String, &Sketch, &String, &Sketch)> = query_sketches
+    let pairs: Vec<(&String,&Sketch,&String,&Sketch)> = query_sketches
         .iter()
-        .flat_map(|(q_name, q_sketch)| {
-            reference_sketches.iter().map(move |(r_name, r_sketch)| {
-                (q_name, q_sketch, r_name, r_sketch)
-            })
-        })
+        .flat_map(|(qn,qs)| reference_sketches.iter().map(move |(rn,rs)| (qn,qs,rn,rs)))
         .collect();
 
-    // Compute similarities and distances in parallel
-    let results: Vec<(String, String, f64)> = pairs
+    let results: Vec<(String,String,f64)> = pairs
         .par_iter()
-        .map(|&(query_name, query_sketch, reference_name, reference_sketch)| {
-            let similarity = query_sketch.similarity(reference_sketch);
-
-            // Avoid division by zero and log of zero
-            let adjusted_similarity = if similarity <= 0.0 {
-                std::f64::EPSILON // Small positive number to avoid log(0)
-            } else {
-                similarity
-            };
-
-            // Calculate distance using the provided formula
-            let numerator = 2.0 * adjusted_similarity;
-            let denominator = 1.0 + adjusted_similarity;
-            let fraction = numerator / denominator;
-            let distance = -fraction.ln() / (kmer_length as f64);
-
-            (query_name.clone(), reference_name.clone(), distance)
+        .map(|(qn,qs,rn,rs)| {
+            let sim  = qs.similarity(rs).max(f64::EPSILON);
+            let dist = -(2.0*sim/(1.0+sim)).ln() / (kmer_length as f64);
+            (qn.to_string(), rn.to_string(), dist)   // ← own the strings
         })
         .collect();
 
-    // Open the output file for writing
-    let mut output = File::create(output_file)?;
-
-    // Write header line
-    writeln!(output, "Query\tReference\tDistance")?;
-    
-    // Write the results with file path normalization
-    for (query_name, reference_name, distance) in &results {
-        // Extract file names from the paths
-        let query_basename = Path::new(&query_name)
-            .file_name()
-            .and_then(|os_str| os_str.to_str())
-            .unwrap_or(&query_name);
-
-        let reference_basename = Path::new(&reference_name)
-            .file_name()
-            .and_then(|os_str| os_str.to_str())
-            .unwrap_or(&reference_name);
-
-        let distance = if query_basename == reference_basename {
-            0.0
-        } else {
-            *distance
-        };
-        writeln!(output, "{}\t{}\t{:.6}", query_name, reference_name, distance)?;
+    let mut out = File::create(output_file)?;
+    writeln!(out,"Query\tReference\tDistance")?;
+    for (q,r,d) in results {
+        let qb = Path::new(&q).file_name().unwrap().to_string_lossy();
+        let rb = Path::new(&r).file_name().unwrap().to_string_lossy();
+        writeln!(out,"{q}\t{r}\t{:.6}", if qb==rb { 0.0 } else { d })?;
     }
-
     Ok(())
 }
