@@ -13,22 +13,22 @@ use std::{
     thread,
 };
 
-use kmerutils::base::{
-    kmergenerator::{KmerSeqIterator, KmerSeqIteratorT},
-    sequence::Sequence as KSeq,
-    CompressedKmerT, Kmer16b32bit, Kmer32bit, Kmer64bit,
-};
+
 use kmerutils::base::KmerT;
 
+use kmerutils::base::{
+    alphabet::Alphabet2b,
+    kmergenerator::{KmerSeqIterator, KmerSeqIteratorT},
+    sequence::Sequence as SequenceStruct,
+    CompressedKmerT, Kmer16b32bit, Kmer32bit, Kmer64bit,
+};
 
-fn filter_out_n(seq: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(seq.len());
-    for &c in seq {
-        if matches!(c, b'A' | b'C' | b'T' | b'G') {
-            out.push(c);
-        }
-    }
-    out
+
+fn ascii_to_seq(bases: &[u8]) -> SequenceStruct {
+    let alpha = Alphabet2b::new();
+    let mut seq = SequenceStruct::with_capacity(2, bases.len());
+    seq.encode_and_add(bases, &alpha);
+    seq
 }
 
 fn mask_bits(v: u64, k: usize) -> u64 {
@@ -81,6 +81,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             Arg::new("output_file")
                 .short('o')
                 .long("output")
+                .help("Output file path")
                 .required(true)
                 .action(ArgAction::Set),
         )
@@ -132,26 +133,24 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             for batch in receiver {
                 let local_sketch = batch.par_iter().map(|seq| {
-                    let seq_vec = filter_out_n(seq);
-                    if seq_vec.is_empty() { return Box::new(Sketch::default()); }
+                    let seq_vec = ascii_to_seq(seq);
                     let mut sketch = Box::new(Sketch::default());
-                    let kseq = KSeq::new(&seq_vec, 2);
                     if kmer_length <= 14 {
-                        let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
+                        let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &seq_vec);
                         while let Some(km) = it.next() {
                             let canon = km.min(km.reverse_complement());
                             let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
                             sketch.add_bytes(&(masked as u32).to_le_bytes());
                         }
                     } else if kmer_length == 16 {
-                        let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
+                        let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &seq_vec);
                         while let Some(km) = it.next() {
                             let canon = km.min(km.reverse_complement());
                             let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
                             sketch.add_bytes(&(masked as u32).to_le_bytes());
                         }
                     } else if kmer_length <= 32 {
-                        let mut it = KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
+                        let mut it = KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &seq_vec);
                         while let Some(km) = it.next() {
                             let canon = km.min(km.reverse_complement());
                             let masked = mask_bits(canon.get_compressed_value(), kmer_length);
@@ -194,26 +193,24 @@ fn main() -> Result<(), Box<dyn Error>> {
             let mut global_sketch = Box::new(Sketch::default());
             for batch in receiver {
                 let local_sketch = batch.par_iter().map(|seq| {
-                    let seq_vec = filter_out_n(seq);
-                    if seq_vec.is_empty() { return Box::new(Sketch::default()); }
+                    let seq_vec = ascii_to_seq(seq);
                     let mut sketch = Box::new(Sketch::default());
-                    let kseq = KSeq::new(&seq_vec, 2);
                     if kmer_length <= 14 {
-                        let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
+                        let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &seq_vec);
                         while let Some(km) = it.next() {
                             let canon = km.min(km.reverse_complement());
                             let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
                             sketch.add_bytes(&(masked as u32).to_le_bytes());
                         }
                     } else if kmer_length == 16 {
-                        let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
+                        let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &seq_vec);
                         while let Some(km) = it.next() {
                             let canon = km.min(km.reverse_complement());
                             let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
                             sketch.add_bytes(&(masked as u32).to_le_bytes());
                         }
                     } else if kmer_length <= 32 {
-                        let mut it = KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
+                        let mut it = KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &seq_vec);
                         while let Some(km) = it.next() {
                             let canon = km.min(km.reverse_complement());
                             let masked = mask_bits(canon.get_compressed_value(), kmer_length);
