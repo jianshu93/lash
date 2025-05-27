@@ -39,7 +39,7 @@ fn mask_bits(v: u64, k: usize) -> u64 {
 fn main() -> Result<(), Box<dyn Error>> {
     env_logger::Builder::from_default_env().init();
 
-    let matches = Command::new("Genome Sketching via HyperMinhash")
+    let matches = Command::new("Genome Sketching via HyperMinHash")
         .version("0.1.0")
         .about("Fast and Memory Efficient Genome/Metagenome Sketching via HyperMinhash")
         .arg(
