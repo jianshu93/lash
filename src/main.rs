@@ -107,7 +107,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     let query_files = read_paths(query_files_list);
     let reference_files = read_paths(reference_files_list);
-
+    println!("Sketching query (meta)genomes with HyperMinHash...");
     let query_sketches: HashMap<String, Sketch> = query_files
         .par_iter()
         .map(|file_name| {
@@ -169,7 +169,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             (file_name, *global_sketch)
         })
         .collect();
-
+    println!("Done");
+    println!("Sketching reference (meta)genomes with HyperMinHash...");
     let reference_sketches: HashMap<String, Sketch> = reference_files
         .par_iter()
         .map(|file_name| {
@@ -228,7 +229,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             (file_name, *global_sketch)
         })
         .collect();
-
+    println!("Done");
     let pairs: Vec<(&String,&Sketch,&String,&Sketch)> = query_sketches
         .iter()
         .flat_map(|(qn,qs)| reference_sketches.iter().map(move |(rn,rs)| (qn,qs,rn,rs)))
