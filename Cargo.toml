@@ -9,11 +9,12 @@ description = "Genome/Metagenome sketching via HyperMinHash"
 
 [dependencies]
 clap = "4.3"
+chrono = "0.4"
 needletail = "0.6.0"
-rayon = "1.5"
+rayon = "1.10"
 crossbeam-channel = "0.5"
 xxhash-rust = "0.8"
 hyperminhash = "0.1.3"
 log = { version = "0.4" }
 env_logger = { version = "0.11" }
-kmerutils = { git = "https://github.com/jean-pierreBoth/kmerutils", features = ["stdsimd"] }
+kmerutils = { git = "https://github.com/jianshu93/kmerutils.git", features = ["stdsimd"] }

@@ -12,6 +12,7 @@ use std::{
     path::Path,
     thread,
 };
+use chrono::Local;
 
 
 use kmerutils::base::KmerT;
@@ -46,7 +47,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             Arg::new("query_files")
                 .short('q')
                 .long("query_file")
-                .help("List of query genome files, one per line with .gz support")
+                .help("A list of query (meta)genome files, one per line with .gz/.bzip2/.xz/.zstd support, can be fastq or fasta")
                 .required(true)
                 .action(ArgAction::Set),
         )
@@ -54,7 +55,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             Arg::new("reference_files")
                 .short('r')
                 .long("ref_file")
-                .help("List of reference genome files, one per line with .gz support")
+                .help("A list of reference (meta)genome files, one per line with .gz/.bzip2/.xz/.zstd support, can be fastq or fasta")
                 .required(true)
                 .action(ArgAction::Set),
         )
@@ -107,6 +108,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
     let query_files = read_paths(query_files_list);
     let reference_files = read_paths(reference_files_list);
+    let now = Local::now();
+    println!("Current time: {}", now);
     println!("Sketching query (meta)genomes with HyperMinHash...");
     let query_sketches: HashMap<String, Sketch> = query_files
         .par_iter()
@@ -119,6 +122,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let mut batch = Vec::new();
                 while let Some(result) = reader.next() {
                     if let Ok(seqrec) = result {
+                        let seq = seqrec.seq();
+                        if seq.len() <= kmer_length {
+                            continue;
+                        }
                         batch.push(seqrec.seq().to_vec());
                         if batch.len() == 5000 {
                             if sender.send(batch.clone()).is_err() { break }
@@ -169,7 +176,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             (file_name, *global_sketch)
         })
         .collect();
+    let end = Local::now();
+    println!("Current time: {}", end);
     println!("Done");
+
+    let now_new = Local::now();
+    println!("Current time: {}", now_new);
     println!("Sketching reference (meta)genomes with HyperMinHash...");
     let reference_sketches: HashMap<String, Sketch> = reference_files
         .par_iter()
@@ -181,6 +193,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let mut batch = Vec::new();
                 while let Some(result) = reader.next() {
                     if let Ok(seqrec) = result {
+                        let seq = seqrec.seq();
+                        if seq.len() <= kmer_length {
+                            continue;
+                        }
                         batch.push(seqrec.seq().to_vec());
                         if batch.len() == 5000 {
                             if sender.send(batch.clone()).is_err() { break }
@@ -218,7 +234,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             sketch.add_bytes(&masked.to_le_bytes());
                         }
                     } else {
-                        panic!("k-mer length must be 1–32");
+                        panic!("k-mer length must be 1–32, k=15 is not supported");
                     }
                     sketch
                 })
@@ -229,7 +245,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             (file_name, *global_sketch)
         })
         .collect();
+    let end_new = Local::now();
+    println!("Current time: {}", end_new);
     println!("Done");
+
     let pairs: Vec<(&String,&Sketch,&String,&Sketch)> = query_sketches
         .iter()
         .flat_map(|(qn,qs)| reference_sketches.iter().map(move |(rn,rs)| (qn,qs,rn,rs)))
