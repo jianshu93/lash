@@ -8,11 +8,20 @@ use crossbeam_channel::bounded;
 use std::error::Error;
 use std::collections::HashMap;
 use std::fs::File;
+use std::fs;
 use std::io::{BufRead, BufReader, Write, BufWriter};
 use std::thread;
 use std::path::Path;
 use hyperminhash::Sketch;
 use serde_json::{to_writer_pretty};
+use serde_json::json;
+
+mod hypermash;
+use hypermash::Hypermash; 
+use ultraloglog::{Estimator, MaximumLikelihoodEstimator, OptimalFGRAEstimator, UltraLogLog};
+mod ultraloglog_utils;
+use crate::ultraloglog_utils::{load, save, Estimation};
+
 
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -30,7 +39,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Arg::new("sketch")
                 .short('s')
                 .long("sketch")
-                .help("One file containing list of FASTA files (.gz supported)")
+                .help("One file containing list of FASTA files (.gz supported). File must be UTF-8.")
+                .required(true)
+                .action(ArgAction::Set)
+            )
+            .arg(
+                Arg::new("output")
+                .short('o')
+                .long("output")
+                .help("Input a prefix/name for your output files")
                 .required(true)
                 .action(ArgAction::Set)
             )
@@ -48,8 +65,35 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .short('t')
                 .long("threads")
                 .help("Number of threads to use")
-                .required(true)
+                .required(false)
                 .value_parser(clap::value_parser!(usize))
+                .action(ArgAction::Set)
+            )
+            .arg(
+                Arg::new("algorithm")
+                .short('a')
+                .long("algorithm")
+                .help("Which algorithm to use: hyperminhash (hmh) or ultraloglog (ull)")
+                .required(true)
+                .action(ArgAction::Set)
+            )
+            .arg(
+                Arg::new("precision")
+                .short('p')
+                .long("precision")
+                .help("Specifiy precision, for ull only")
+                .required(false)
+                .requires_if("ull", "algorithm")
+                .value_parser(clap::value_parser!(usize))
+                .action(ArgAction::Set)
+            )
+            .arg(
+                Arg::new("estimator")
+                .short('e')
+                .long("estimator")
+                .help("Specify estimator (optimal or ml), for ull only")
+                .required(false)
+                .requires_if("ull", "algorithm")
                 .action(ArgAction::Set)
             )
         )
@@ -60,8 +104,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Arg::new("reference")
                 .short('r')
                 .long("reference")
-                .help("File for list of names and file for sketches for the reference genome, respectively, 
-                separated by space")
+                .help("Prefix to search for reference genome files")
                 .required(true)
                 .num_args(2)
                 .action(ArgAction::Set)
@@ -70,19 +113,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Arg::new("query")
                 .short('q')
                 .long("query")
-                .help("File for list of names and file for sketches for the query genome, respectively, 
-                separated by space")
+                .help("Prefix to search for query genome files")
                 .required(true)
                 .num_args(2)
-                .action(ArgAction::Set)
-            )
-            .arg(
-                Arg::new("kmer_length")
-                .short('k')
-                .long("kmer")
-                .help("Length of the kmer")
-                .required(true)
-                .value_parser(clap::value_parser!(usize))
                 .action(ArgAction::Set)
             )
             .arg(
@@ -98,139 +131,159 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .short('t')
                 .long("threads")
                 .help("Number of threads to use")
-                .required(true)
+                .required(false)
                 .value_parser(clap::value_parser!(usize))
                 .action(ArgAction::Set)
             )
+            
         )
         .get_matches();
 
     match matches.subcommand() {
         Some(("sketch", s_matches)) => {
+            // organize the inputs
             let sketch_file_name = s_matches.get_one::<String>("sketch").expect("required");
-            let kmer_length: usize = *s_matches.get_one::<usize>("kmer_length").unwrap();
-            let threads: usize = *s_matches.get_one::<usize>("threads").unwrap();
+            let kmer_length: usize = *s_matches.get_one::<usize>("kmer_length").expect("required");
+            let threads: usize = *s_matches.get_one::<usize>("threads").unwrap_or(&num_cpus::get());
 
-            // Read the lists of query and reference files
-            let sketch_file = File::open(sketch_file_name)?;
-            let sketch_reader = BufReader::new(sketch_file);
-            let sketch_files: Vec<String> = sketch_reader
-                .lines()
-                .filter_map(|line| line.ok())
-                .filter(|line| !line.trim().is_empty())
-                .collect();
+            let output_name = s_matches.get_one::<String>("output").expect("required");
+            let alg = s_matches.get_one::<String>("algorithm").expect("required");
 
-            ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build_global()
-            .unwrap();
+            if alg == "hmh" {
+                // create hypermash object and sketch
+                let hm = Hypermash::new(sketch_file_name.clone(), kmer_length, threads, output_name.clone());
+                hm.sketch();
+            }
+            else if alg == "ull" {
+                let precision: u32 = *s_matches.get_one::<usize>("precision").expect("required") as u32;
+                let estimator = s_matches.get_one::<String>("estimator").expect("required");
+                // create ull object and sketch
+                let sketch_file = File::open(sketch_file_name)?;
+                let sketch_reader = BufReader::new(sketch_file);
+                let files: Vec<String> = sketch_reader
+                    .lines()
+                    .filter_map(|line| line.ok())
+                    .filter(|line| !line.trim().is_empty())
+                    .collect();
 
-            // Process files and create sketches
-            let sketches: HashMap<String, Sketch> = sketch_files
-            .par_iter()
-            .map(|file_name| {
-                // Clone the file name for ownership in the closure
-                let file_name = file_name.clone();
+                // sketch the genomes per file
+                files.par_iter().for_each(|file| {
+                    let hashes = load::<u64>(file);
+                    let mut ull = UltraLogLog::new(precision).expect("failed to create ull");
+                    let estimations: Vec<Estimation> = hashes
+                        .iter()
+                        .enumerate()
+                        .map(|(i, num)| {
+                            ull.add(*num);
+                            let est = match estimator.as_str() {
+                                "optimal" => OptimalFGRAEstimator.estimate(&ull),
+                                "ml" => MaximumLikelihoodEstimator.estimate(&ull),
+                                _ => unreachable!(),
+                            };
 
-                // Process the file and create a sketch
-                let mut reader = parse_fastx_file(&file_name).expect("Failed to parse file");
-                let (sender, receiver) = bounded(10); // Channel with capacity 10
+                            Estimation((i + 1) as u64, est as u64, estimator.to_string())
+                        })
+                        .collect();
 
-                // Spawn a thread to read sequences and send batches
-                let reader_thread = thread::spawn(move || {
-                    let mut batch = Vec::new();
-                    while let Some(result) = reader.next() {
-                        if let Ok(seqrec) = result {
-                            batch.push(seqrec.seq().to_vec());
-                            if batch.len() == 5000 {
-                                if sender.send(batch.clone()).is_err() {
-                                    break; // Receiver has hung up
-                                }
-                                batch.clear();
-                            }
-                        }
-                    }
-                    if !batch.is_empty() {
-                        let _ = sender.send(batch); // Send remaining batch
-                    }
+                    let basename = Path::new(file).file_name().unwrap().to_str().unwrap();
+
+                    // write sketches to file
+                    let filename = format!("est-p{}-{}-{}", precision, estimator, basename);
+                    save(&estimations, filename.as_str(), output_name);
                 });
 
-                // Initialize an empty Sketch allocated on the heap
-                let mut global_sketch = Box::new(Sketch::default());
-
-                // Process the batches
-                for batch in receiver {
-                    // Process the batch in parallel
-                    let local_sketch = batch
-                        .par_iter()
-                        .map(|seq| {
-                            // Allocate sketch on the heap
-                            let mut sketch = Box::new(Sketch::default());
-                            let kmer_length_u8 = kmer_length as u8;
-                            for kmer in Kmers::new(seq, kmer_length_u8) {
-                                let kmer_bytes = canonical(kmer); // Use canonical function
-                                sketch.add_bytes(&kmer_bytes);
-                            }
-                            sketch
-                        })
-                        .reduce(
-                            || Box::new(Sketch::default()),
-                            |mut a, b| {
-                                a.union(&b);
-                                a
-                            },
-                        );
-
-                    // Merge the local sketch into the global sketch
-                    global_sketch.union(&local_sketch);
-                }
-
-                // Wait for the reader thread to finish
-                reader_thread.join().expect("Reader thread panicked");
-
-                (file_name, *global_sketch)
-            })
-            .collect();
-
-            // put names into a json file
-            let mut names: Vec<String> = sketches.keys().cloned().collect();
+            // write all file names to a json file
             to_writer_pretty(
-                &File::create(format!("{}_names.json", sketch_file_name.clone()))?,
-                &names
+                &File::create(format!("{}_names.json", output_name))?,
+                &files
             )?;
 
-            // serialize sketches
-            let file_name = format!("{}_sketches.bin",  sketch_file_name.clone());
-            let mut sketch_writer = BufWriter::new(File::create(file_name)?);
+            // save a json of parameters used
+            let data = json!({
+                "k": kmer_length.to_string(),
+                "algorithm": "ull", 
+                "precision": precision.to_string(),
+                "estimator": estimator
+            });
+        
+            let json_str = serde_json::to_string_pretty(&data).unwrap();
+            let mut param_file = File::create(format!("{}_parameters.json", 
+                output_name))?;
+            param_file.write_all(json_str.as_bytes())?;
 
-            for name in &names {
-                let sketch = &sketches[name];
-                sketch.save(&mut sketch_writer)?;
             }
-
-            println!("Serialized sketches.");
             Ok(())
         }
         Some(("distance", s_matches)) => {
-            let query_files: Vec<&str> = s_matches
-                .get_many::<String>("query")
-                .expect("required")
-                .map(|s| s.as_str())
-                .collect();
-            let query_namefile = query_files[0];
-            let query_sketch_file = query_files[1];
+            let ref_prefix = s_matches.get_one::<String>("reference").expect("required");
+            let query_prefix = s_matches.get_one::<String>("query").expect("required");
+            
+            fn find_files(prefix: &String) -> std::io::Result<HashMap<&str, String>> {
+                let mut files: Vec<String> = Vec::new();
+                let dir = "./"; // use curent directory
 
-            let ref_files: Vec<&str> = s_matches
-                .get_many::<String>("reference")
-                .expect("required")
-                .map(|s| s.as_str())
-                .collect();
-            let ref_namefile = ref_files[0];
-            let ref_sketch_file = ref_files[1];
-            let kmer_length: usize = *s_matches.get_one::<usize>("kmer_length").unwrap();
+                for entry in fs::read_dir(dir)? {
+                    let entry = entry?;
+                    let path = entry.path();
 
+                    // if file starts with prefix, add it to vector of possible reference/ sketch files
+                    if path.is_file() {
+                        if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
+                            if filename.starts_with(prefix) {
+                                files.push(filename.to_string());
+                            }
+                        }
+                    }
+                }
+
+                if files.len() != 3 {
+                    panic!("There should be 3 files starting with {} but {} were found instead", 
+                    prefix, 
+                    files.len());
+                }
+                let mut file_map: HashMap<&str, String> = HashMap::new();
+                for file in &files {
+                    if file.ends_with("parameters.json") {
+                        file_map.insert("params",file.clone());
+                    }
+                    else if file.ends_with("names.json") {
+                        file_map.insert("names",file.clone());
+                    }
+                    else { // .bin file for sketches
+                        file_map.insert("sketches",file.clone());
+                    }
+                }
+                Ok(file_map)
+            }
+            
             let output_file: &String = s_matches.get_one::<String>("output_file").expect("required");
             let threads: usize = *s_matches.get_one::<usize>("threads").unwrap();
+
+            // go through the files needed, find name file, sketch file, and param file
+            let ref_files = find_files(ref_prefix).unwrap();
+            let query_files = find_files(query_prefix).unwrap();
+            let ref_param_file = ref_files["params"].clone();
+            let query_param_file = query_files["params"].clone();
+            
+            let query_map: HashMap<String, String> = serde_json::from_str(&query_param_file).expect("Invalid JSON");
+            let ref_map: HashMap<String, String> = serde_json::from_str(&ref_param_file).expect("Invalid JSON");
+            
+            if ref_map["k"] != query_map["k"] {
+                panic!("Genomes were not sketched with the same k");
+            }
+            if ref_map["algorithm"] != query_map["algorithm"] {
+                panic!("Algorithms do not match in query and sketch genomes")
+            }
+            if ref_map["algorithm"] == "ull" {
+                if ref_map["precision"] != query_map["precision"] {
+                    panic!("ull was not sketched with same precision")
+                }
+                if ref_map["estimator"] != query_map["estimator"] {
+                    panic!("ull was not sketched with same estimator")
+                }
+            }
+            // assign kmer length once k matches
+            let kmer_length:usize = ref_map["k"].parse().expect("Not a valid usize");
 
             ThreadPoolBuilder::new()
             .num_threads(threads)
@@ -258,9 +311,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
 
             //create query sketch hashmap
+            let query_namefile = query_files["names"].clone();
+            let query_sketch_file = query_files["sketches"].clone();
             let query_names: Vec<String> = read_names(&query_namefile)
                             .expect(&format!("Error with reading from {}", query_namefile));
-            let q_sketch_vec: Vec<Sketch> = read_sketches(query_sketch_file, &query_names)
+            let q_sketch_vec: Vec<Sketch> = read_sketches(&query_sketch_file, &query_names)
                             .expect(&format!("Error with reading from {}", query_sketch_file));
             
             let mut index = 0;
@@ -271,9 +326,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             
             // create reference sketch hashmap
+            let ref_namefile = ref_files["names"].clone();
+            let ref_sketch_file = ref_files["sketches"].clone();
             let reference_names: Vec<String> = read_names(&ref_namefile)
                             .expect(&format!("Error with reading from {}", ref_namefile));
-            let r_sketch_vec = read_sketches(ref_sketch_file, &reference_names)
+            let r_sketch_vec = read_sketches(&ref_sketch_file, &reference_names)
                             .expect(&format!("Error with reading from {}", ref_sketch_file));
             let mut reference_sketches = HashMap::new();
             index = 0;
