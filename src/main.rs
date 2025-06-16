@@ -257,8 +257,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let results: Vec<(String,String,f64)> = pairs
         .par_iter()
         .map(|(qn,qs,rn,rs)| {
-            let sim  = qs.similarity(rs).max(f64::EPSILON);
-            let dist = -(2.0*sim/(1.0+sim)).ln() / (kmer_length as f64);
+            let sim  = qs.similarity(rs);
+            let dist = (2.0 * sim / (1.0 + sim))
+                .powf(1.0 / kmer_length as f64);
             (qn.to_string(), rn.to_string(), dist)   // ← own the strings
         })
         .collect();
