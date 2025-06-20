@@ -1,15 +1,15 @@
 use needletail::{parse_fastx_file, Sequence};
-use needletail::kmer::Kmers;
-use needletail::sequence::canonical;
+// use needletail::kmer::Kmers;
+// use needletail::sequence::canonical;
 use rayon::prelude::*;
-use rayon::ThreadPoolBuilder;
+// use rayon::ThreadPoolBuilder;
 use crossbeam_channel::bounded;
 use std::error::Error;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write, BufWriter};
 use std::thread;
-use std::path::Path;
+// use std::path::Path;
 use hyperminhash::Sketch;
 use serde_json::{to_writer_pretty};
 use serde_json::json;
@@ -38,7 +38,7 @@ pub fn mask_bits(v: u64, k: usize) -> u64 {
 
 // function for distance
 pub fn hmh_distance(reference_names: Vec<String>, ref_sketch_file: String, kmer_length: usize,
-    query_names: Vec<String>, query_sketch_file: String, output_file: &String) 
+    query_names: Vec<String>, query_sketch_file: String) 
     -> Result<Vec<(String, String, f64)>, Box<dyn Error>> {
 
     // function to read sketches in using hypermash load
@@ -71,11 +71,11 @@ pub fn hmh_distance(reference_names: Vec<String>, ref_sketch_file: String, kmer_
         index += 1;
     }
     //Generate all pairs of query and reference sketches
-    let pairs: Vec<(&String, &Sketch, &String, &Sketch)> = query_sketches
+    let pairs: Vec<(&String, &Sketch, &String, &Sketch)> = reference_sketches
     .iter()
-    .flat_map(|(q_name, q_sketch)| {
-        reference_sketches.iter().map(move |(r_name, r_sketch)| {
-            (*q_name, *q_sketch, *r_name, *r_sketch)
+    .flat_map(|(r_name, r_sketch)| {
+        query_sketches.iter().map(move |(q_name, q_sketch)| {
+            (*r_name, *r_sketch, *q_name, *q_sketch)
         })
     })
     .collect();
@@ -84,7 +84,7 @@ pub fn hmh_distance(reference_names: Vec<String>, ref_sketch_file: String, kmer_
     // Compute similarities and distances in parallel
     let results: Vec<(String, String, f64)> = pairs
         .par_iter()
-        .map(|&(query_name, query_sketch, reference_name, reference_sketch)| {
+        .map(|&(reference_name, reference_sketch, query_name, query_sketch)| {
             let similarity = query_sketch.similarity(reference_sketch);
 
             // Avoid division by zero and log of zero
@@ -100,7 +100,7 @@ pub fn hmh_distance(reference_names: Vec<String>, ref_sketch_file: String, kmer_
             let fraction: f64 = numerator / denominator;
             let distance = -fraction.ln() / (kmer_length as f64);
 
-            (query_name.clone(), reference_name.clone(), distance)
+            (reference_name.clone(), query_name.clone(), distance)
         })
         .collect();
     Ok(results)
@@ -214,7 +214,7 @@ impl Hypermash {
         // put names into a json file
         let mut names: Vec<String> = sketches.keys().cloned().collect();
         to_writer_pretty(
-            &File::create(format!("{}_names.json", self.output_name))?,
+            &File::create(format!("{}_files.json", self.output_name))?,
             &names
         )?;
 
