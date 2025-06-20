@@ -1,27 +1,32 @@
 use clap::{Arg, ArgAction, Command};
 use needletail::{parse_fastx_file, Sequence};
-use needletail::kmer::Kmers;
-use needletail::sequence::canonical;
+// use needletail::kmer::Kmers;
+// use needletail::sequence::canonical;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
-use crossbeam_channel::bounded;
+//use crossbeam_channel::bounded;
 use std::error::Error;
 use std::collections::HashMap;
 use std::fs::File;
 use std::fs;
 use std::io::{BufRead, BufReader, Write, BufWriter};
-use std::thread;
+//use std::thread;
 use std::path::Path;
-use hyperminhash::Sketch;
 use serde_json::{to_writer_pretty};
 use serde_json::json;
+use xxhash_rust::xxh3::xxh3_64;
 
 mod hypermash;
 use hypermash::Hypermash; 
-use ultraloglog::{Estimator, MaximumLikelihoodEstimator, OptimalFGRAEstimator, UltraLogLog};
-mod ultraloglog_utils;
-use crate::ultraloglog_utils::{load, save, Estimation};
+use crate::hypermash::{hmh_distance, mask_bits, filter_out_n};
+use ultraloglog::{UltraLogLog};
 
+use kmerutils::base::{
+    kmergenerator::{KmerSeqIterator, KmerSeqIteratorT},
+    sequence::Sequence as KSeq,
+    CompressedKmerT, Kmer16b32bit, Kmer32bit, Kmer64bit,
+};
+use kmerutils::base::KmerT;
 
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -36,9 +41,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             Command::new("sketch")
             .about("Creates vectors and serializes them")
             .arg(
-                Arg::new("sketch")
-                .short('s')
-                .long("sketch")
+                Arg::new("file")
+                .short('f')
+                .long("file")
                 .help("One file containing list of FASTA files (.gz supported). File must be UTF-8.")
                 .required(true)
                 .action(ArgAction::Set)
@@ -106,7 +111,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .long("reference")
                 .help("Prefix to search for reference genome files")
                 .required(true)
-                .num_args(2)
                 .action(ArgAction::Set)
             )
             .arg(
@@ -115,7 +119,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .long("query")
                 .help("Prefix to search for query genome files")
                 .required(true)
-                .num_args(2)
                 .action(ArgAction::Set)
             )
             .arg(
@@ -142,22 +145,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     match matches.subcommand() {
         Some(("sketch", s_matches)) => {
             // organize the inputs
-            let sketch_file_name = s_matches.get_one::<String>("sketch").expect("required");
+            let sketch_file_name = s_matches.get_one::<String>("file").expect("required");
             let kmer_length: usize = *s_matches.get_one::<usize>("kmer_length").expect("required");
             let threads: usize = *s_matches.get_one::<usize>("threads").unwrap_or(&num_cpus::get());
 
             let output_name = s_matches.get_one::<String>("output").expect("required");
             let alg = s_matches.get_one::<String>("algorithm").expect("required");
 
+            ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build_global()
+                .unwrap();
+
             if alg == "hmh" {
                 // create hypermash object and sketch
-                let hm = Hypermash::new(sketch_file_name.clone(), kmer_length, threads, output_name.clone());
+                let hm = Hypermash::new(sketch_file_name.clone(), kmer_length, output_name.clone());
                 hm.sketch();
             }
             else if alg == "ull" {
                 let precision: u32 = *s_matches.get_one::<usize>("precision").expect("required") as u32;
                 let estimator = s_matches.get_one::<String>("estimator").expect("required");
-                // create ull object and sketch
+
+                // create vector of files to be sketched
                 let sketch_file = File::open(sketch_file_name)?;
                 let sketch_reader = BufReader::new(sketch_file);
                 let files: Vec<String> = sketch_reader
@@ -166,52 +175,83 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .filter(|line| !line.trim().is_empty())
                     .collect();
 
-                // sketch the genomes per file
-                files.par_iter().for_each(|file| {
-                    let hashes = load::<u64>(file);
+                // set up file and writer for sketching
+                let sketch_output = File::create(format!("{}_sketches.bin", &output_name)).expect("Failed to create file");
+                let mut writer = BufWriter::new(sketch_output);
+
+                // loop through each file, create a ull for each one, add kmers 
+                for file in &files {
+                    let mut count = 0;
                     let mut ull = UltraLogLog::new(precision).expect("failed to create ull");
-                    let estimations: Vec<Estimation> = hashes
-                        .iter()
-                        .enumerate()
-                        .map(|(i, num)| {
-                            ull.add(*num);
-                            let est = match estimator.as_str() {
-                                "optimal" => OptimalFGRAEstimator.estimate(&ull),
-                                "ml" => MaximumLikelihoodEstimator.estimate(&ull),
-                                _ => unreachable!(),
-                            };
 
-                            Estimation((i + 1) as u64, est as u64, estimator.to_string())
-                        })
-                        .collect();
+                    // add kmers into ull
+                    let mut reader = parse_fastx_file(file).expect("Invalid input file");
 
-                    let basename = Path::new(file).file_name().unwrap().to_str().unwrap();
+                    while let Some(record) = reader.next() {
+                        let seqrec = record.expect("Error reading record");
+                        let seq_vec: Vec<u8> = filter_out_n(&seqrec.seq());
+                        let kseq = KSeq::new(&seq_vec, 2);
 
-                    // write sketches to file
-                    let filename = format!("est-p{}-{}-{}", precision, estimator, basename);
-                    save(&estimations, filename.as_str(), output_name);
+                        if kmer_length <= 14 {
+                            let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
+                            while let Some(km) = it.next() {
+                                let canon = km.min(km.reverse_complement());
+                                let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                                let hash64 = xxh3_64(&masked.to_le_bytes());
+                                ull.add(hash64);
+                                count += 1;
+                            }
+                        }
+                        else if kmer_length == 16 {
+                            let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
+                            while let Some(km) = it.next() {
+                                let canon = km.min(km.reverse_complement());
+                                let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                                let hash64 = xxh3_64(&masked.to_le_bytes());
+                                ull.add(hash64);
+                                count += 1;
+                            }
+                        } else if kmer_length <= 32 {
+                            let mut it = KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
+                            while let Some(km) = it.next() {
+                                let canon = km.min(km.reverse_complement());
+                                let masked = mask_bits(canon.get_compressed_value(), kmer_length);
+                                let hash64 = xxh3_64(&masked.to_le_bytes());
+                                ull.add(hash64);
+                                count += 1;
+                            }
+                        } else {
+                            panic!("k-mer length must be 1–32, k=15 is not supported");
+                        }
+                    }
+
+                    // serialize sketches
+                    println!("went through {} kmers", count);
+                    println!("estimated cardinality: {}", ull.get_distinct_count_estimate());
+                    ull.save(&mut writer).expect("Failed to save UltraLogLog");
+                }
+                
+
+                // write all file names to a json file
+                to_writer_pretty(
+                    &File::create(format!("{}_names.json", &output_name))?,
+                    &files
+                )?;
+
+                // save a json of parameters used
+                let data = json!({
+                    "k": kmer_length.to_string(),
+                    "algorithm": "ull", 
+                    "precision": precision.to_string(),
+                    "estimator": estimator
                 });
+                let json_str = serde_json::to_string_pretty(&data).unwrap();
+                let mut param_file = File::create(format!("{}_parameters.json", 
+                    output_name))?;
+                param_file.write_all(json_str.as_bytes())?;
 
-            // write all file names to a json file
-            to_writer_pretty(
-                &File::create(format!("{}_names.json", output_name))?,
-                &files
-            )?;
-
-            // save a json of parameters used
-            let data = json!({
-                "k": kmer_length.to_string(),
-                "algorithm": "ull", 
-                "precision": precision.to_string(),
-                "estimator": estimator
-            });
-        
-            let json_str = serde_json::to_string_pretty(&data).unwrap();
-            let mut param_file = File::create(format!("{}_parameters.json", 
-                output_name))?;
-            param_file.write_all(json_str.as_bytes())?;
-
-            }
+                println!("Serialized sketches with ull");
+                }
             Ok(())
         }
         Some(("distance", s_matches)) => {
@@ -236,28 +276,33 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
 
-                if files.len() != 3 {
-                    panic!("There should be 3 files starting with {} but {} were found instead", 
-                    prefix, 
-                    files.len());
-                }
+                // if files.len() != 3 {
+                //     panic!("There should be 3 files starting with {} but {} were found instead", 
+                //     prefix, 
+                //     files.len());
+                // }
                 let mut file_map: HashMap<&str, String> = HashMap::new();
-                for file in &files {
+                for file in files {
                     if file.ends_with("parameters.json") {
-                        file_map.insert("params",file.clone());
+                        file_map.insert("params",file);
                     }
                     else if file.ends_with("names.json") {
-                        file_map.insert("names",file.clone());
+                        file_map.insert("names",file);
                     }
-                    else { // .bin file for sketches
-                        file_map.insert("sketches",file.clone());
+                    else if file.ends_with(".bin") { // .bin file for sketches
+                        file_map.insert("sketches",file);
                     }
+                }
+                if file_map.keys().len() != 3 {
+                    panic!("There should be 3 files starting with {} but {} were found instead", 
+                    prefix, 
+                    file_map.keys().len());
                 }
                 Ok(file_map)
             }
             
             let output_file: &String = s_matches.get_one::<String>("output_file").expect("required");
-            let threads: usize = *s_matches.get_one::<usize>("threads").unwrap();
+            let threads: usize = *s_matches.get_one::<usize>("threads").unwrap_or(&num_cpus::get());
 
             // go through the files needed, find name file, sketch file, and param file
             let ref_files = find_files(ref_prefix).unwrap();
@@ -265,9 +310,16 @@ fn main() -> Result<(), Box<dyn Error>> {
             let ref_param_file = ref_files["params"].clone();
             let query_param_file = query_files["params"].clone();
             
-            let query_map: HashMap<String, String> = serde_json::from_str(&query_param_file).expect("Invalid JSON");
-            let ref_map: HashMap<String, String> = serde_json::from_str(&ref_param_file).expect("Invalid JSON");
+            // println!("{}", ref_param_file);
+            // println!("{}", query_param_file);
+
+            // read in parameter json files into hashmaps
+            let contents_ref = fs::read_to_string(ref_param_file).expect("Unable to read file");
+            let contents_query = fs::read_to_string(query_param_file).expect("Unable to read file");
+            let ref_map: HashMap<String, String> = serde_json::from_str(&contents_ref).expect("Invalid JSON");
+            let query_map: HashMap<String, String> = serde_json::from_str(&contents_query).expect("Invalid JSON");
             
+            // check that parameters match between ref and query genomes
             if ref_map["k"] != query_map["k"] {
                 panic!("Genomes were not sketched with the same k");
             }
@@ -286,11 +338,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             let kmer_length:usize = ref_map["k"].parse().expect("Not a valid usize");
 
             ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build_global()
-            .unwrap();
+                .num_threads(threads)
+                .build_global()
+                .unwrap();
 
-            // function to read in names of the genomes into a vector of names
+            // function to read in names of the genomes, outputs a vector of names
             fn read_names(file_name: &str) -> std::io::Result<Vec<String>> {
                 let file = File::open(file_name).expect(&format!("Error opening {}", file_name));
                 let reader = BufReader::new(file);
@@ -299,79 +351,87 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
 
             // function to read in sketches and put them together with their names into a hashmap
-            fn read_sketches<'a>(file_name: &'a str, names: &'a Vec<String>) -> std::io::Result<Vec<Sketch>> {
-                let file = File::open(file_name).expect(&format!("Error opening {}", file_name));
-                let mut reader = BufReader::new(file);
-                let mut sketches = Vec::new();
-                for name in names {
-                    let sketch = Sketch::load(&mut reader)?;
-                    sketches.push(sketch);
-                }
-                Ok(sketches)
-            }
+            // fn read_sketches<'a>(file_name: &'a str, names: &'a Vec<String>) -> std::io::Result<Vec<Sketch>> {
+            //     let file = File::open(file_name).expect(&format!("Error opening {}", file_name));
+            //     let mut reader = BufReader::new(file);
+            //     let mut sketches = Vec::new();
+            //     for name in names {
+            //         let sketch = Sketch::load(&mut reader)?;
+            //         sketches.push(sketch);
+            //     }
+            //     Ok(sketches)
+            // }
 
             //create query sketch hashmap
             let query_namefile = query_files["names"].clone();
-            let query_sketch_file = query_files["sketches"].clone();
+            let query_sketch_file_name = query_files["sketches"].clone();
             let query_names: Vec<String> = read_names(&query_namefile)
                             .expect(&format!("Error with reading from {}", query_namefile));
-            let q_sketch_vec: Vec<Sketch> = read_sketches(&query_sketch_file, &query_names)
-                            .expect(&format!("Error with reading from {}", query_sketch_file));
-            
-            let mut index = 0;
-            let mut query_sketches: HashMap<&String, &Sketch> = HashMap::new();
-            for sketch in &q_sketch_vec {
-                query_sketches.insert(&query_names[index], sketch);
-                index += 1;
-            }
             
             // create reference sketch hashmap
             let ref_namefile = ref_files["names"].clone();
-            let ref_sketch_file = ref_files["sketches"].clone();
+            let ref_sketch_file_name = ref_files["sketches"].clone();
             let reference_names: Vec<String> = read_names(&ref_namefile)
                             .expect(&format!("Error with reading from {}", ref_namefile));
-            let r_sketch_vec = read_sketches(&ref_sketch_file, &reference_names)
-                            .expect(&format!("Error with reading from {}", ref_sketch_file));
-            let mut reference_sketches = HashMap::new();
-            index = 0;
-            for sketch in &r_sketch_vec {
-                reference_sketches.insert(&reference_names[index], sketch);
-                index += 1;
+            
+            let mut results: Vec<(String, String, f64)> = Vec::new();
+            if ref_map["algorithm"] == "hmh" {
+                results = hmh_distance(reference_names, ref_sketch_file_name, kmer_length, query_names, query_sketch_file_name, output_file).unwrap();
             }
+            else if ref_map["algorithm"] == "ull" {
+                
+                let ref_sketch_file = File::open(ref_sketch_file_name).expect("Failed to open file");
+                let query_sketch_file = File::open(query_sketch_file_name).expect("Failed to open file");
+            
+                // function that creates a hashmap holding name of genome and the ull and cardinality for it
+                fn create_ull_map(sketch_file: File, names: &Vec<String>) -> Result<HashMap<String, (UltraLogLog, f64)>, std::io::Error> {
+                    let mut sketches: HashMap<String, (UltraLogLog, f64)> = HashMap::new();
+                    let mut reader = BufReader::new(sketch_file);
+                    for file in names {
+                        let ref_ull = UltraLogLog::load(&mut reader)?;
+                        let c: f64 = ref_ull.get_distinct_count_estimate();
+                        println!("calculated cardinality: {}", c);
+                        sketches.insert(file.clone(), (ref_ull, c));
+                    }
+                    Ok(sketches)
+                }
+                let ref_map = create_ull_map(ref_sketch_file, &reference_names).unwrap();
+                let query_map = create_ull_map(query_sketch_file, &query_names).unwrap();
+                
+                // create all pairs between reference and query
+                let pairs: Vec<(&str, &str)> = ref_map.keys()
+                    .flat_map(|k1| {
+                        query_map.keys().map(move |k2| (k1.as_str(), k2.as_str()))
+                    })
+                    .collect();
+                
+                results = pairs
+                    .par_iter()
+                    .map(|&(reference_name, query_name)| {
+                        let a: f64 = ref_map[reference_name].1; // cardinality of reference
+                        //println!("{}", a);
+                        let b: f64 = query_map[query_name].1; // cardinality of query
+                        //println!("{}", b);
+                        let union_ull = UltraLogLog::merge(
+                            &ref_map[reference_name].0, 
+                            &query_map[query_name].0,)
+                            .expect("failed to merge sketches");
 
-            //Generate all pairs of query and reference sketches
-            let pairs: Vec<(&String, &Sketch, &String, &Sketch)> = query_sketches
-            .iter()
-            .flat_map(|(q_name, q_sketch)| {
-                reference_sketches.iter().map(move |(r_name, r_sketch)| {
-                    (*q_name, *q_sketch, *r_name, *r_sketch)
-                })
-            })
-            .collect();
-
-
-            // Compute similarities and distances in parallel
-            let results: Vec<(String, String, f64)> = pairs
-                .par_iter()
-                .map(|&(query_name, query_sketch, reference_name, reference_sketch)| {
-                    let similarity = query_sketch.similarity(reference_sketch);
-
-                    // Avoid division by zero and log of zero
-                    let adjusted_similarity = if similarity <= 0.0 {
-                        std::f64::EPSILON // Small positive number to avoid log(0)
-                    } else {
-                        similarity
-                    };
-
-                    // Calculate distance using the provided formula
-                    let numerator = 2.0 * adjusted_similarity;
-                    let denominator = 1.0 + adjusted_similarity;
-                    let fraction: f64 = numerator / denominator;
-                    let distance = -fraction.ln() / (kmer_length as f64);
-
-                    (query_name.clone(), reference_name.clone(), distance)
-                })
-                .collect();
+                        let intersection = union_ull.get_distinct_count_estimate();
+                        let similarity = (a + b - intersection) / intersection;
+                        let adjusted_similarity = if similarity <= 0.0 {
+                            std::f64::EPSILON // Small positive number to avoid log(0)
+                        } else {
+                            similarity
+                        };
+                        let numerator: f64 = 2.0 * adjusted_similarity;
+                        let denominator: f64 = 1.0 + adjusted_similarity;
+                        let fraction: f64 = numerator / denominator;
+                        let distance: f64 = -fraction.ln() / (kmer_length as f64);
+                        (reference_name.to_string(), query_name.to_string(), distance)
+                    })
+                    .collect();
+            } 
 
             // Open the output file for writing
             let mut output = File::create(output_file)?;

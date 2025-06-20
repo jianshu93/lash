@@ -20,7 +20,7 @@ use kmerutils::base::{
 };
 use kmerutils::base::KmerT;
 
-fn filter_out_n(seq: &[u8]) -> Vec<u8> {
+pub fn filter_out_n(seq: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(seq.len());
     for &c in seq {
         if matches!(c, b'A' | b'C' | b'T' | b'G') {
@@ -30,35 +30,100 @@ fn filter_out_n(seq: &[u8]) -> Vec<u8> {
     out
 }
 
-fn mask_bits(v: u64, k: usize) -> u64 {
+pub fn mask_bits(v: u64, k: usize) -> u64 {
     let b = 2 * k as u32;
     if b == 64 { v } else { v & ((1u64 << b) - 1) }
 }
+
+
+// function for distance
+pub fn hmh_distance(reference_names: Vec<String>, ref_sketch_file: String, kmer_length: usize,
+    query_names: Vec<String>, query_sketch_file: String, output_file: &String) 
+    -> Result<Vec<(String, String, f64)>, Box<dyn Error>> {
+
+    // function to read sketches in using hypermash load
+    fn read_sketches(file_name: &str, names: &Vec<String>) -> std::io::Result<Vec<Sketch>> {
+        let file = File::open(file_name).expect(&format!("Error opening {}", file_name));
+        let mut reader = BufReader::new(file);
+        let mut sketches = Vec::new();
+        for name in names {
+            let sketch = Sketch::load(&mut reader)?;
+            sketches.push(sketch);
+        }
+        Ok(sketches)
+    }
+
+    let q_sketch_vec: Vec<Sketch> = read_sketches(&query_sketch_file, &query_names)
+                        .expect(&format!("Error with reading from {}", query_sketch_file));
+    let mut index = 0;
+    let mut query_sketches: HashMap<&String, &Sketch> = HashMap::new();
+    for sketch in &q_sketch_vec {
+        query_sketches.insert(&query_names[index], sketch);
+        index += 1;
+    }
+
+    let r_sketch_vec = read_sketches(&ref_sketch_file, &reference_names)
+                        .expect(&format!("Error with reading from {}", ref_sketch_file));
+    let mut reference_sketches = HashMap::new();
+    index = 0;
+    for sketch in &r_sketch_vec {
+        reference_sketches.insert(&reference_names[index], sketch);
+        index += 1;
+    }
+    //Generate all pairs of query and reference sketches
+    let pairs: Vec<(&String, &Sketch, &String, &Sketch)> = query_sketches
+    .iter()
+    .flat_map(|(q_name, q_sketch)| {
+        reference_sketches.iter().map(move |(r_name, r_sketch)| {
+            (*q_name, *q_sketch, *r_name, *r_sketch)
+        })
+    })
+    .collect();
+
+
+    // Compute similarities and distances in parallel
+    let results: Vec<(String, String, f64)> = pairs
+        .par_iter()
+        .map(|&(query_name, query_sketch, reference_name, reference_sketch)| {
+            let similarity = query_sketch.similarity(reference_sketch);
+
+            // Avoid division by zero and log of zero
+            let adjusted_similarity = if similarity <= 0.0 {
+                std::f64::EPSILON // Small positive number to avoid log(0)
+            } else {
+                similarity
+            };
+
+            // Calculate distance using the provided formula
+            let numerator = 2.0 * adjusted_similarity;
+            let denominator = 1.0 + adjusted_similarity;
+            let fraction: f64 = numerator / denominator;
+            let distance = -fraction.ln() / (kmer_length as f64);
+
+            (query_name.clone(), reference_name.clone(), distance)
+        })
+        .collect();
+    Ok(results)
+}
+
 pub struct Hypermash {
     file: String, 
     kmer_length: usize, 
-    threads: usize, 
     output_name: String, 
 }
 
 impl Hypermash {
     // create a new hypermash object
-    pub fn new(file_name: String, k: usize, t: usize, option: String) -> Hypermash {
+    pub fn new(file_name: String, k: usize, option: String) -> Hypermash {
         Hypermash {
             file: file_name, 
             kmer_length: k, 
-            threads: t, 
             output_name: option
         }
     }
 
     // sketches a list of genome file names
     pub fn sketch(&self) -> Result<(), Box<dyn Error>> {
-        ThreadPoolBuilder::new()
-            .num_threads(self.threads)
-            .build_global()
-            .unwrap();
-
         let sketch_file = File::open(&self.file)?;
         let sketch_reader = BufReader::new(sketch_file);
         let sketch_files: Vec<String> = sketch_reader
@@ -173,7 +238,7 @@ impl Hypermash {
             self.output_name))?;
         param_file.write_all(json_str.as_bytes())?;
 
-        println!("Serialized sketches.");
+        println!("Serialized sketches with hmh");
         Ok(())
     }
 

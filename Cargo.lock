@@ -961,7 +961,7 @@ dependencies = [
 [[package]]
 name = "kmerutils"
 version = "0.0.14"
-source = "git+https://github.com/jean-pierreBoth/kmerutils#ef95c7048efd4e881d36f7ad21458085fd17119b"
+source = "git+https://github.com/jianshu93/kmerutils.git#d50980969b8afeb9b01705ec96768f0a07a6dcb3"
 dependencies = [
  "anyhow",
  "bloom",
@@ -2009,8 +2009,10 @@ checksum = "1dccffe3ce07af9386bfd29e80c0ab1a8205a2fc34e4bcd40364df902cfa8f3f"
 [[package]]
 name = "ultraloglog"
 version = "0.1.3"
-source = "git+https://github.com/waynexia/ultraloglog#ee1b52ce90c6bbb1c12ecdfd6c9be48e8584e500"
+source = "git+https://github.com/waynexia/ultraloglog#47929c324abf17805a9a7a2a618e822e9b190f5a"
 dependencies = [
+ "bincode",
+ "serde",
  "xxhash-rust",
 ]
 
