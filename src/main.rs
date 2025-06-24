@@ -172,12 +172,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .filter(|line| !line.trim().is_empty())
                     .collect();
 
-                // set up file and writer for sketching
-                let sketch_output = File::create(format!("{}_sketches.bin", &output_name)).expect("Failed to create file");
-                let mut writer = BufWriter::new(sketch_output);
-
+                
                 // loop through each file, create a ull for each one, add kmers 
-                for file in &files {
+                let ull_vec: Vec<UltraLogLog> = files.par_iter().map(|file| {
+                    
                     let mut ull = UltraLogLog::new(precision).expect("failed to create ull");                    // add kmers into ull
                     let mut reader = parse_fastx_file(file).expect("Invalid input file");
 
@@ -214,12 +212,22 @@ fn main() -> Result<(), Box<dyn Error>> {
                         } else {
                             panic!("k-mer length must be 1–32, k=15 is not supported");
                         }
+                        
                     }
 
-                    // serialize sketches
-                    ull.save(&mut writer).expect("Failed to save UltraLogLog");
-                }
+                    // save the ull
+                    ull
+                })
+                .collect();
 
+                // set up file and writer for sketching
+                let sketch_output = File::create(format!("{}_sketches.bin", &output_name)).expect("Failed to create file");
+                let mut writer = BufWriter::new(sketch_output);
+
+                for ull_file in &ull_vec {
+                    ull_file.save(&mut writer).expect("Failed to save UltraLogLog");
+                }
+                
                 // write all file names to a json file
                 to_writer_pretty(
                     &File::create(format!("{}_files.json", &output_name))?,
