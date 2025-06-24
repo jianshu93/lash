@@ -15,6 +15,7 @@ use std::{
     path::Path,
     thread,
 };
+use std::iter;
 
 use chrono::Local;
 
@@ -42,41 +43,34 @@ fn mask_bits(v: u64, k: usize) -> u64 {
 }
 
 fn sketch_one_file_hmh(path: &str, k: usize) -> Sketch {
-    const BATCH:     usize = 5_000;   // sequences per batch
-    const IN_FLIGHT: usize = 10;      // bounded-channel depth
+    use std::iter;
 
-    // 1. Reader thread → sends Vec<Vec<u8>> batches
-    let (sender, receiver) = bounded::<Vec<Vec<u8>>>(IN_FLIGHT);
-    let reader = thread::spawn({
+    const BATCH: usize = 5_000;
+
+    // 1.  Move the FASTX reader into a generator-style iterator
+    let batch_iter = {
         let p = path.to_owned();
-        move || {
-            let mut rdr = parse_fastx_file(&p).expect("cannot open FASTX");
-            let mut batch = Vec::with_capacity(BATCH);
+        let mut rdr = parse_fastx_file(&p).expect("open FASTX");
 
+        iter::from_fn(move || {
+            let mut batch = Vec::with_capacity(BATCH);
             while let Some(rec) = rdr.next() {
                 if let Ok(seqrec) = rec {
-                    if seqrec.seq().len() <= k { continue; }
-                    batch.push(seqrec.seq().to_vec());
-
-                    if batch.len() == BATCH {
-                        // clone-and-clear exactly like your par_iter version
-                        if sender.send(batch.clone()).is_err() { break }
-                        batch.clear();
+                    if seqrec.seq().len() > k {
+                        batch.push(seqrec.seq().to_vec());
+                        if batch.len() == BATCH { break }
                     }
                 }
             }
-            if !batch.is_empty() {
-            let _ = sender.send(batch);   // last partial batch (we still own it)
-            }
-        }
-    });
+            if batch.is_empty() { None } else { Some(batch) }
+        })
+    };
 
-    let global = receiver
-        .into_iter()
+    // 2.  Stream those batches in parallel with `par_bridge`
+    batch_iter
         .par_bridge()
         .map(|batch| {
             let mut sk = Sketch::default();
-
             for seq in batch {
                 let seq_vec = ascii_to_seq(&seq);
 
@@ -84,37 +78,28 @@ fn sketch_one_file_hmh(path: &str, k: usize) -> Sketch {
                     let mut it = KmerSeqIterator::<Kmer32bit>::new(k as u8, &seq_vec);
                     while let Some(km) = it.next() {
                         let masked = mask_bits(
-                            km.min(km.reverse_complement()).get_compressed_value() as u64,
-                            k,
-                        );
+                            km.min(km.reverse_complement()).get_compressed_value() as u64, k);
                         sk.add_bytes(&(masked as u32).to_le_bytes());
                     }
                 } else if k == 16 {
                     let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &seq_vec);
                     while let Some(km) = it.next() {
                         let masked = mask_bits(
-                            km.min(km.reverse_complement()).get_compressed_value() as u64,
-                            k,
-                        );
+                            km.min(km.reverse_complement()).get_compressed_value() as u64, k);
                         sk.add_bytes(&(masked as u32).to_le_bytes());
                     }
                 } else {
                     let mut it = KmerSeqIterator::<Kmer64bit>::new(k as u8, &seq_vec);
                     while let Some(km) = it.next() {
                         let masked = mask_bits(
-                            km.min(km.reverse_complement()).get_compressed_value(),
-                            k,
-                        );
+                            km.min(km.reverse_complement()).get_compressed_value(), k);
                         sk.add_bytes(&masked.to_le_bytes());
                     }
                 }
             }
             sk
         })
-        .reduce(|| Sketch::default(), |mut a, b| { a.union(&b); a });
-
-    reader.join().expect("reader thread panicked");
-    global
+        .reduce(|| Sketch::default(), |mut a, b| { a.union(&b); a })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────
