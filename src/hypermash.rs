@@ -6,6 +6,7 @@ use rayon::prelude::*;
 use crossbeam_channel::bounded;
 use std::error::Error;
 use std::collections::HashMap;
+use xxhash_rust::xxh3::Xxh3Builder;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write, BufWriter};
 use std::thread;
@@ -56,7 +57,7 @@ pub fn hmh_distance(reference_names: Vec<String>, ref_sketch_file: String, kmer_
     let q_sketch_vec: Vec<Sketch> = read_sketches(&query_sketch_file, &query_names)
                         .expect(&format!("Error with reading from {}", query_sketch_file));
     let mut index = 0;
-    let mut query_sketches: HashMap<&String, &Sketch> = HashMap::new();
+    let mut query_sketches = HashMap::with_hasher(Xxh3Builder::new());
     for sketch in &q_sketch_vec {
         query_sketches.insert(&query_names[index], sketch);
         index += 1;
@@ -64,7 +65,7 @@ pub fn hmh_distance(reference_names: Vec<String>, ref_sketch_file: String, kmer_
 
     let r_sketch_vec = read_sketches(&ref_sketch_file, &reference_names)
                         .expect(&format!("Error with reading from {}", ref_sketch_file));
-    let mut reference_sketches = HashMap::new();
+    let mut reference_sketches = HashMap::with_hasher(Xxh3Builder::new());
     index = 0;
     for sketch in &r_sketch_vec {
         reference_sketches.insert(&reference_names[index], sketch);

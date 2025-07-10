@@ -7,6 +7,7 @@ use rayon::ThreadPoolBuilder;
 //use crossbeam_channel::bounded;
 use std::error::Error;
 use std::collections::HashMap;
+use xxhash_rust::xxh3::Xxh3Builder;
 use std::fs::File;
 use std::fs;
 use std::io::{BufRead, BufReader, Write, BufWriter};
@@ -369,8 +370,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let estimator = s_matches.get_one::<String>("estimator").cloned().unwrap_or_else(|| "fgra".to_string());
 
                 // function that creates a hashmap holding name of genome and the ull and cardinality for it
-                fn create_ull_map(sketch_file: File, names: &Vec<String>, estimator:&String ) -> Result<HashMap<String, (UltraLogLog, f64)>, std::io::Error> {
-                    let mut sketches: HashMap<String, (UltraLogLog, f64)> = HashMap::new();
+                fn create_ull_map(sketch_file: File, names: &Vec<String>, estimator:&String ) -> Result<HashMap<String, (UltraLogLog, f64), Xxh3Builder>, std::io::Error> {
+                    let mut sketches: HashMap<String, (UltraLogLog, f64), Xxh3Builder> = HashMap::with_hasher(Xxh3Builder::new());
                     let mut reader = BufReader::new(sketch_file);
                     for file in names {
                         let ref_ull = UltraLogLog::load(&mut reader)?;

@@ -1,0 +1,12 @@
+/Users/claire/Documents/Rust/hypermash/target/debug/deps/libmmap_rs-737e00f380cf069e.rmeta: /Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/lib.rs /Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/areas.rs /Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/error.rs /Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/mmap.rs /Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/os_impl/mod.rs /Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/os_impl/unix.rs /Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/os_impl/macos.rs /Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/../README.md
+
+/Users/claire/Documents/Rust/hypermash/target/debug/deps/mmap_rs-737e00f380cf069e.d: /Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/lib.rs /Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/areas.rs /Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/error.rs /Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/mmap.rs /Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/os_impl/mod.rs /Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/os_impl/unix.rs /Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/os_impl/macos.rs /Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/../README.md
+
+/Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/lib.rs:
+/Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/areas.rs:
+/Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/error.rs:
+/Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/mmap.rs:
+/Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/os_impl/mod.rs:
+/Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/os_impl/unix.rs:
+/Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/os_impl/macos.rs:
+/Users/claire/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mmap-rs-0.6.1/src/../README.md:
