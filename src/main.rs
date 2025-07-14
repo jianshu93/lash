@@ -1,33 +1,20 @@
 use clap::{Arg, ArgAction, Command};
-use needletail::{parse_fastx_file, Sequence};
 // use needletail::kmer::Kmers;
 // use needletail::sequence::canonical;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
-//use crossbeam_channel::bounded;
 use std::error::Error;
 use std::collections::HashMap;
 use xxhash_rust::xxh3::Xxh3Builder;
 use std::fs::File;
 use std::fs;
-use std::io::{BufRead, BufReader, Write, BufWriter};
-//use std::thread;
+use std::io::{BufReader, Write};
+use zstd::stream::Decoder;
 use std::path::Path;
-use serde_json::{to_writer_pretty};
-use serde_json::json;
-use xxhash_rust::xxh3::xxh3_64;
 
-mod hypermash;
-use hypermash::Hypermash; 
-use crate::hypermash::{hmh_distance, mask_bits, filter_out_n};
+mod utils;
+use crate::utils::{hmh_distance, hmh_sketch, ull_sketch};
 use ultraloglog::{UltraLogLog, Estimator, MaximumLikelihoodEstimator};
-
-use kmerutils::base::{
-    kmergenerator::{KmerSeqIterator, KmerSeqIteratorT},
-    sequence::Sequence as KSeq,
-    CompressedKmerT, Kmer16b32bit, Kmer32bit, Kmer64bit,
-};
-use kmerutils::base::KmerT;
 
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -156,102 +143,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .build_global()
                 .unwrap();
 
+            let result: Result<(), Box<dyn Error>>;
             if alg == "hmh" {
                 // create hypermash object and sketch
-                let hm = Hypermash::new(sketch_file_name.clone(), kmer_length, output_name.clone());
-                hm.sketch();
+                result = hmh_sketch(sketch_file_name.clone(), kmer_length, output_name.clone());
+                
             }
             else if alg == "ull" {
                 let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
-
-                // create vector of files to be sketched
-                let sketch_file = File::open(sketch_file_name)?;
-                let sketch_reader = BufReader::new(sketch_file);
-                let files: Vec<String> = sketch_reader
-                    .lines()
-                    .filter_map(|line| line.ok())
-                    .filter(|line| !line.trim().is_empty())
-                    .collect();
-
-                
-                // loop through each file, create a ull for each one, add kmers 
-                let ull_vec: Vec<UltraLogLog> = files.par_iter().map(|file| {
-                    
-                    let mut ull = UltraLogLog::new(precision).expect("failed to create ull");                    // add kmers into ull
-                    let mut reader = parse_fastx_file(file).expect("Invalid input file");
-
-                    while let Some(record) = reader.next() {
-                        let seqrec = record.expect("Error reading record");
-                        let seq_vec: Vec<u8> = filter_out_n(&seqrec.seq());
-                        let kseq = KSeq::new(&seq_vec, 2);
-
-                        if kmer_length <= 14 {
-                            let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
-                            while let Some(km) = it.next() {
-                                let canon = km.min(km.reverse_complement());
-                                let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
-                                let hash64 = xxh3_64(&masked.to_le_bytes());
-                                ull.add(hash64);
-                            }
-                        }
-                        else if kmer_length == 16 {
-                            let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
-                            while let Some(km) = it.next() {
-                                let canon = km.min(km.reverse_complement());
-                                let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
-                                let hash64 = xxh3_64(&masked.to_le_bytes());
-                                ull.add(hash64);
-                            }
-                        } else if kmer_length <= 32 {
-                            let mut it = KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
-                            while let Some(km) = it.next() {
-                                let canon = km.min(km.reverse_complement());
-                                let masked = mask_bits(canon.get_compressed_value(), kmer_length);
-                                let hash64 = xxh3_64(&masked.to_le_bytes());
-                                ull.add(hash64);
-                            }
-                        } else {
-                            panic!("k-mer length must be 1–32, k=15 is not supported");
-                        }
-                        
-                    }
-
-                    // save the ull
-                    ull
-                })
-                .collect();
-
-                // set up file and writer for sketching
-                let sketch_output = File::create(format!("{}_sketches.bin", &output_name)).expect("Failed to create file");
-                let mut writer = BufWriter::new(sketch_output);
-
-                for ull_file in &ull_vec {
-                    ull_file.save(&mut writer).expect("Failed to save UltraLogLog");
-                }
-                
-                // write all file names to a json file
-                to_writer_pretty(
-                    &File::create(format!("{}_files.json", &output_name))?,
-                    &files
-                )?;
-
-                // save a json of parameters used
-                let data = json!({
-                    "k": kmer_length.to_string(),
-                    "algorithm": "ull", 
-                    "precision": precision.to_string(),
-                });
-                let json_str = serde_json::to_string_pretty(&data).unwrap();
-                let mut param_file = File::create(format!("{}_parameters.json", 
-                    output_name))?;
-                param_file.write_all(json_str.as_bytes())?;
-
-                println!("Serialized sketches with ull");
+                result = ull_sketch(precision, sketch_file_name.clone(), kmer_length, output_name.clone());
             }
             else { // input for alg is not hmh or ull
                 panic!("Algorithm must be either hmh or ull");
             }
-            Ok(())
+            result
         }
         Some(("distance", s_matches)) => {
             let ref_prefix = s_matches.get_one::<String>("reference").expect("required");
@@ -373,8 +278,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 fn create_ull_map(sketch_file: File, names: &Vec<String>, estimator:&String ) -> Result<HashMap<String, (UltraLogLog, f64), Xxh3Builder>, std::io::Error> {
                     let mut sketches: HashMap<String, (UltraLogLog, f64), Xxh3Builder> = HashMap::with_hasher(Xxh3Builder::new());
                     let mut reader = BufReader::new(sketch_file);
+
+                    // decompress sketches
+                    let mut decoder = Decoder::new(reader).expect("failed to create decompressor");
                     for file in names {
-                        let ref_ull = UltraLogLog::load(&mut reader)?;
+                        let ref_ull = UltraLogLog::load(&mut decoder)?;
                         let c: f64 = match estimator.as_str() {
                             "fgra" => ref_ull.get_distinct_count_estimate(),
                             "ml" => MaximumLikelihoodEstimator.estimate(&ref_ull),
