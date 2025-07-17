@@ -166,6 +166,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let mut files: Vec<String> = Vec::new();
                 let dir = "./"; // use curent directory
 
+                let norm_prefix = {
+                    let p = Path::new(prefix)
+                    .file_name()
+                    .and_then(|os_str| os_str.to_str())
+                    .unwrap_or(prefix);
+                    // .strip_prefix("./")
+                    // .unwrap_or(prefix)
+
+                    p.strip_prefix("./").unwrap_or(p)
+                };
+
                 for entry in fs::read_dir(dir)? {
                     let entry = entry?;
                     let path = entry.path();
@@ -173,7 +184,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     // if file starts with prefix, add it to vector of possible reference/ sketch files
                     if path.is_file() {
                         if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-                            if filename.starts_with(prefix) {
+                            if filename.starts_with(norm_prefix) {
                                 files.push(filename.to_string());
                             }
                         }
@@ -199,7 +210,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
                 if file_map.keys().len() != 3 {
                     panic!("There should be 3 files starting with {} but {} were found instead", 
-                    prefix, 
+                    norm_prefix, 
                     file_map.keys().len());
                 }
                 Ok(file_map)
@@ -232,7 +243,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             if ref_map["algorithm"] == "ull" {
                 if ref_map["precision"] != query_map["precision"] {
-                    panic!("ull was not sketched with same precision")
+                    panic!("ull was not sketched with same precision btwn genomes")
                 }
                 
             }
@@ -314,8 +325,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                             &query_map[query_name].0,)
                             .expect("failed to merge sketches");
 
-                        let intersection = union_ull.get_distinct_count_estimate();
-                        let similarity = (a + b - intersection) / intersection;
+                        let union = union_ull.get_distinct_count_estimate();
+                        let similarity = (a + b - union) / union;
                         let adjusted_similarity = if similarity <= 0.0 {
                             std::f64::EPSILON // Small positive number to avoid log(0)
                         } else {
