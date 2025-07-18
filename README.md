@@ -27,18 +27,16 @@ cargo build --release
 
 ## Usage
 ```bash
+Fast and Memory Efficient Genome/Metagenome Sketching via HyperMinhash
 
- ************** initializing logger *****************
-
-Fast and Memory Efficient Genome Sketching via HyperMinhash
-
-Usage: hypermash --query_file <query_files> --ref_file <reference_files> --kmer <kmer_length> --output <output_file>
+Usage: hypermash [OPTIONS] --query_file <query_files> --ref_file <reference_files> --kmer <kmer_length> --output <output_file>
 
 Options:
-  -q, --query_file <query_files>    File containing list of query FASTA files
-  -r, --ref_file <reference_files>  File containing list of reference FASTA files
-  -k, --kmer <kmer_length>          Length of k-mers
-  -o, --output <output_file>        Output file to write results
+  -q, --query_file <query_files>    List of query genome files, one per line with .gz support
+  -r, --ref_file <reference_files>  List of reference genome files, one per line with .gz support
+  -k, --kmer <kmer_length>          Kmer length to use for sketching
+  -t, --threads <THREADS>           Number of threads to use in parallel [default: 1]
+  -o, --output <output_file>        Output file path
   -h, --help                        Print help
   -V, --version                     Print version
 
