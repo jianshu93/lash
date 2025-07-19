@@ -22,17 +22,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("\n ************** initializing logger *****************\n");
     env_logger::Builder::from_default_env().init();
     // Set up the command-line arguments
-    let matches = Command::new("Genome Sketching via HyperMinhash")
+    let matches = Command::new("Genome Sketching via HyperMinhash and UltraLogLog")
         .version("0.1.0")
-        .about("Fast and Memory Efficient Genome/Metagenome Sketching via HyperMinhash")
+        .about("Fast and Memory Efficient (Meta)genome Sketching via HyperMinhash and UltraLogLog")
         .subcommand(
             Command::new("sketch")
-            .about("Creates vectors and serializes them")
+            .about("Sketches genomes and serializes them, sketches are compressed")
             .arg(
                 Arg::new("file")
                 .short('f')
                 .long("file")
-                .help("One file containing list of FASTA files (.gz supported). File must be UTF-8.")
+                .help("One file containing list of FASTA/FASTQ files (.gz/.bz2/.zstd supported), one per line. File must be UTF-8.")
                 .required(true)
                 .action(ArgAction::Set)
             )
@@ -41,7 +41,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .short('o')
                 .long("output")
                 .help("Input a prefix/name for your output files")
-                .required(true)
+                .required(false)
+                .default_value("sketch")
                 .action(ArgAction::Set)
             )
             .arg(
@@ -49,7 +50,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .short('k')
                 .long("kmer")
                 .help("Length of the kmer")
-                .required(true)
+                .required(false)
+                .default_value("16")
                 .value_parser(clap::value_parser!(usize))
                 .action(ArgAction::Set)
             )
@@ -60,37 +62,32 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .help("Number of threads to use")
                 .required(false)
                 .value_parser(clap::value_parser!(usize))
+                .default_value("1")
                 .action(ArgAction::Set)
             )
             .arg(
                 Arg::new("algorithm")
                 .short('a')
                 .long("algorithm")
-                .help("Which algorithm to use: hyperminhash (hmh) or ultraloglog (ull)")
-                .required(true)
+                .help("Which algorithm to use: HyperMinHash (hmh) or UltraLogLog (ull)")
+                .required(false)
+                .default_value("hmh")
                 .action(ArgAction::Set)
             )
             .arg(
                 Arg::new("precision")
                 .short('p')
                 .long("precision")
-                .help("Specifiy precision, for ull only. Default 10.")
+                .help("Specifiy precision, for ull only.")
                 .required(false)
                 .value_parser(clap::value_parser!(usize))
+                .default_value("10")
                 .action(ArgAction::Set)
             )
         )
         .subcommand(
-            Command::new("distance")
+            Command::new("dist")
             .about("Computes distance between sketches")
-            .arg(
-                Arg::new("reference")
-                .short('r')
-                .long("reference")
-                .help("Prefix to search for reference genome files")
-                .required(true)
-                .action(ArgAction::Set)
-            )
             .arg(
                 Arg::new("query")
                 .short('q')
@@ -100,11 +97,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .action(ArgAction::Set)
             )
             .arg(
+                Arg::new("reference")
+                .short('r')
+                .long("reference")
+                .help("Prefix to search for reference genome files")
+                .required(true)
+                .action(ArgAction::Set)
+            )
+            .arg(
                 Arg::new("output_file")
                 .short('o')
                 .long("output_file")
                 .help("Name of output file to write results")
-                .required(true)
+                .required(false)
+                .default_value("dist.txt")
                 .action(ArgAction::Set)
             )
             .arg(
@@ -114,14 +120,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .help("Number of threads to use")
                 .required(false)
                 .value_parser(clap::value_parser!(usize))
+                .default_value("1")
                 .action(ArgAction::Set)
             )
             .arg(
                 Arg::new("estimator")
                 .short('e')
                 .long("estimator")
-                .help("Specify estimator (fgra or ml), for ull only. Default fgra. ")
+                .help("Specify estimator (fgra or ml), for ull only")
                 .required(false)
+                .default_value("fgra")
                 .action(ArgAction::Set)
             )
             
@@ -158,7 +166,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             result
         }
-        Some(("distance", s_matches)) => {
+        Some(("dist", s_matches)) => {
             let ref_prefix = s_matches.get_one::<String>("reference").expect("required");
             let query_prefix = s_matches.get_one::<String>("query").expect("required");
             
@@ -288,7 +296,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 // function that creates a hashmap holding name of genome and the ull and cardinality for it
                 fn create_ull_map(sketch_file: File, names: &Vec<String>, estimator:&String ) -> Result<HashMap<String, (UltraLogLog, f64), Xxh3Builder>, std::io::Error> {
                     let mut sketches: HashMap<String, (UltraLogLog, f64), Xxh3Builder> = HashMap::with_hasher(Xxh3Builder::new());
-                    let mut reader = BufReader::new(sketch_file);
+                    let reader = BufReader::new(sketch_file);
 
                     // decompress sketches
                     let mut decoder = Decoder::new(reader).expect("failed to create decompressor");
