@@ -1,6 +1,6 @@
 [![Latest Version](https://img.shields.io/crates/v/hypermash?style=for-the-badge&color=mediumpurple&logo=rust)](https://crates.io/crates/hypermash)
 
-# Fast and Memory Efficient Genome/Metagenome Sketching via HyperMinHash
+# Fast and Memory Efficient Genome/Metagenome Sketching via HyperMinHash or Ultraloglog
 
 Genome sketching can be extremely accurate but requires a huge amount of memory for MinHash-like algorithms. Recently, a new algorithm combining MinHash and HyperLogLog, called HyerMinHash was invented (1), which can perform MinHash in loglog space, a significant decrease in space/memory requirement. Together with [lukaslueg](https://github.com/lukaslueg), we first create a Rust library [hyperminhash](https://github.com/lukaslueg/hyperminhash) and then combine rolling hashing with HyperMinHash for extremely fast processing of genomic sequences. Xxhash3 was used as the underlying hashing technique. 
 
@@ -36,7 +36,7 @@ cargo build --release
 
  ************** initializing logger *****************
 
-Fast and Memory Efficient Genome Sketching via HyperMinhash
+Fast and Memory Efficient Genome Sketching via HyperMinhash or Ultraloglog
 
 Subcommand 1: Sketching
 Sketching: hypermash sketch --file <file> --output <output_prefix> --kmer <kmer_length> --threads <num_threads>-algorighm <algorithm> -precision <precision_ull>
