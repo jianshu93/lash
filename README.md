@@ -1,10 +1,10 @@
 [![Latest Version](https://img.shields.io/crates/v/hypermash?style=for-the-badge&color=mediumpurple&logo=rust)](https://crates.io/crates/hypermash)
 
-# Fast and Memory Efficient Genome/Metagenome Sketching via HyperMinHash or Ultraloglog
+# Fast and Memory Efficient Genome/Metagenome Sketching via LASH
 
 Genome sketching can be extremely accurate but requires a huge amount of memory for MinHash-like algorithms. Recently, a new algorithm combining MinHash and HyperLogLog, called HyerMinHash was invented (1), which can perform MinHash in loglog space, a significant decrease in space/memory requirement. Together with [lukaslueg](https://github.com/lukaslueg), we first create a Rust library [hyperminhash](https://github.com/lukaslueg/hyperminhash) and then combine rolling hashing with HyperMinHash for extremely fast processing of genomic sequences. Xxhash3 was used as the underlying hashing technique. 
 
-More recently, an algorithm named Ultraloglog was invented (2). It is similar to Hyperloglog but with 28% more space efficiency due to a faster estimator. Ultraloglog also has better compaction when using compressing algorithms. Ultraloglog was implemented with [waynexia] (https://github.com/waynexia). Both HyperMinHash and Ultraloglog are options available for use on our tool. 
+More recently, an algorithm named Ultraloglog was invented (2). It is similar to Hyperloglog but with up to 28% more space efficiency due to a faster estimator. Ultraloglog also has better compaction when using compressing algorithms. Ultraloglog was implemented with [waynexia] (https://github.com/waynexia). Both HyperMinHash and Ultraloglog are options available for use on our tool. 
 
 We employed a simple producer-consumer model to also reduce memory requirement for large files, e.g., metagenomic files. Both sketching and distance computation are parallelized to make full use of all CPU threads/cores. 
 
@@ -36,10 +36,10 @@ cargo build --release
 
  ************** initializing logger *****************
 
-Fast and Memory Efficient Genome Sketching via HyperMinhash or Ultraloglog
+Fast and Memory Efficient Genome Sketching via LASH
 
 Subcommand 1: Sketching
-Sketching: hypermash sketch --file <file> --output <output_prefix> --kmer <kmer_length> --threads <num_threads>-algorighm <algorithm> -precision <precision_ull>
+Sketching: lash sketch --file <file> --output <output_prefix> --kmer <kmer_length> --threads <num_threads>-algorighm <algorithm> -precision <precision_ull>
 
 Options:
   -f, --file <file>                 File containing list of FASTA files
@@ -52,7 +52,7 @@ Options:
 
 
 Subcommand 2: Distance
-Distance: hypermash dist --query <query__prefix> --reference <ref_prefix> --output <output_prefix>--threads <num_threads> --estimator <estimator_ull>
+Distance: lash dist --query <query__prefix> --reference <ref_prefix> --output <output_prefix>--threads <num_threads> --estimator <estimator_ull>
 Options:
   -q, --query <query_prefix>        Prefix to search for your query genome files. Should match what you put as "output" from sketch. 
   -r, --reference <ref_prefix>      Prefix to search for your reference genome files. Should match what you put as "output" from sketch. 
@@ -69,7 +69,7 @@ Options:
 ```bash
 ls ./data/*.fasta > query_list_strep.txt
 ls ./data/*.fasta > ref_list_strep.txt
-hypermash --query_file ./query_list_strep.txt -r ref_list_strep.txt -k 16 -o dist.txt
+lash --query_file ./query_list_strep.txt -r ref_list_strep.txt -k 16 -o dist.txt
 ```
 
 ## Output
