@@ -1,4 +1,4 @@
-[![Latest Version](https://img.shields.io/crates/v/lash?style=for-the-badge&color=mediumpurple&logo=rust)](https://crates.io/crates/lash)
+[![Latest Version](https://img.shields.io/crates/v/lash-rs?style=for-the-badge&color=mediumpurple&logo=rust)](https://crates.io/crates/lash-rs)
 
 # Fast and Memory Efficient Genome/Metagenome Sketching via HyperMinHash and UltraLogLog
 
