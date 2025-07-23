@@ -1,5 +1,0 @@
-Query	Reference	Distance
-/Users/claire/Documents/Rust/hypermash/files/Agathobacter_rectalis_ref.fna.gz	/Users/claire/Documents/Rust/hypermash/files/GCF_013300505.1_ASM1330050v1_genomic.fna.gz	0.020542
-/Users/claire/Documents/Rust/hypermash/files/Agathobacter_rectalis_ref.fna.gz	/Users/claire/Documents/Rust/hypermash/files/GCF_013299645.1_ASM1329964v1_genomic.fna.gz	0.020167
-/Users/claire/Documents/Rust/hypermash/files/GCF_013299645.1_ASM1329964v1_genomic.fna.gz	/Users/claire/Documents/Rust/hypermash/files/GCF_013300505.1_ASM1330050v1_genomic.fna.gz	0.000493
-/Users/claire/Documents/Rust/hypermash/files/GCF_013299645.1_ASM1329964v1_genomic.fna.gz	/Users/claire/Documents/Rust/hypermash/files/GCF_013299645.1_ASM1329964v1_genomic.fna.gz	0.000000

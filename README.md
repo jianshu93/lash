@@ -4,19 +4,19 @@
 
 Genome sketching can be extremely accurate but requires a huge amount of memory for MinHash-like algorithms. Recently, a new algorithm combining MinHash and HyperLogLog, called HyerMinHash was invented (1), which can perform MinHash in loglog space, a significant decrease in space/memory requirement. Together with [lukaslueg](https://github.com/lukaslueg), we first create a Rust library [hyperminhash](https://github.com/lukaslueg/hyperminhash) and then combine rolling hashing with HyperMinHash for extremely fast processing of genomic sequences. Xxhash3 was used as the underlying hashing technique. 
 
-More recently, an algorithm named Ultraloglog was invented (2). It is similar to Hyperloglog but with up to 28% more space efficiency due to a faster estimator. Ultraloglog also has better compaction when using compressing algorithms. Ultraloglog was implemented with [waynexia](https://github.com/waynexia). Both HyperMinHash and Ultraloglog are options available for use on our tool. 
+More recently, an algorithm named Ultraloglog was invented (2). It is similar to Hyperloglog but with up to 28% more space efficiency due to a faster estimator. Ultraloglog also has better compaction when using compressing algorithms. Ultraloglog was implemented with [waynexia](https://github.com/waynexia), see [ultraloglog](https://github.com/waynexia/ultraloglog). Both HyperMinHash and Ultraloglog are options available for use on our tool. 
 
 We employed a simple producer-consumer model to also reduce memory requirement for large files, e.g., metagenomic files. Both sketching and distance computation are parallelized to make full use of all CPU threads/cores. 
 
-There are two main subcommands, sketch and dist. Sketch is the sketching command and outputs 3 files; one file containing the sketches of the genomes, one file containing the genome files used, and one file containing parameters used for the command. Dist is the command that "reads" the sketch files and outputs a file containing the distances between the query and reference genomes, which is specified by the user. More details on these commands are under "Usage". 
+There are two main subcommands, sketch and dist. Sketch is the sketching command and outputs 3 files; one file containing the sketches of the genomes (zstd compressed), one file containing the genome files used, and one file containing parameters used for the command. Dist is the command that "reads" the sketch files and outputs a file containing the distances between the query and reference genomes, which is specified by the user. More details on these commands are under "Usage". 
 
 We hope that you find this tool helpful in your scientific endeavors!
 
 ## Quick install
 ```bash
 ### pre-compiled binary for Linux
-wget https://github.com/jianshu93/lash/releases/download/v0.1.0/lash_Linux_x86-64_v0.1.0.zip
-unzip lash_Linux_x86-64_v0.1.0.zip
+wget https://github.com/jianshu93/lash/releases/download/v0.1.2/lash_Linux_x86-64_v0.1.2.zip
+unzip lash_Linux_x86-64_v0.1.2.zip
 chomd a+x ./lash
 ./lash -h
 
@@ -36,10 +36,9 @@ cargo build --release
 
  ************** initializing logger *****************
 
-Fast and Memory Efficient Genome Sketching via LASH
+Fast and Memory Efficient Genome Sketching via HyperMinHash and UltraLogLog
 
-Subcommand 1: Sketching
-Sketching: lash sketch --file <file> --output <output_prefix> --kmer <kmer_length> --threads <num_threads>-algorighm <algorithm> -precision <precision_ull>
+lash sketch --file <file> --output <output_prefix> --kmer <kmer_length> --threads <num_threads>-algorighm <algorithm> -precision <precision_ull>
 
 Options:
   -f, --file <file>                 File containing list of FASTA files
@@ -51,8 +50,7 @@ Options:
   -v, --version                     Print version
 
 
-Subcommand 2: Distance
-Distance: lash dist --query <query__prefix> --reference <ref_prefix> --output <output_prefix>--threads <num_threads> --estimator <estimator_ull>
+lash dist --query <query__prefix> --reference <ref_prefix> --output <output_prefix>--threads <num_threads> --estimator <estimator_ull>
 Options:
   -q, --query <query_prefix>        Prefix to search for your query genome files. Should match what you put as "output" from sketch. 
   -r, --reference <ref_prefix>      Prefix to search for your reference genome files. Should match what you put as "output" from sketch. 
@@ -64,12 +62,12 @@ Options:
 
 ```
 
-
-
 ```bash
 ls ./data/*.fasta > query_list_strep.txt
 ls ./data/*.fasta > ref_list_strep.txt
-lash sketch --query_file ./query_list_strep.txt -r ref_list_strep.txt -k 16
+lash sketch --query_file ./query_list_strep.txt -r ref_list_strep.txt -k 16 -o skh
+lash dist -q ./skh -r ./skh -t 8 -o dist
+
 ```
 
 ## Output
