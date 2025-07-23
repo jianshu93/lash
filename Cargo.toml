@@ -1,5 +1,5 @@
 [package]
-name = "lash"
+name = "lash-rs"
 version = "0.1.2"
 edition = "2021"
 repository = "https://github.com/jianshu93/lash"
@@ -7,6 +7,10 @@ keywords = ["genome", "MinHash", "sketch", "HyperLogLog"]
 license = "MIT OR Apache-2.0"
 description = "Genome/Metagenome sketching via HyperMinHash and UltraLogLog"
 
+[[bin]]
+
+name = "lash"
+path = "src/main.rs"
 
 
 [dependencies]
