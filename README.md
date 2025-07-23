@@ -38,28 +38,27 @@ cargo build --release
 
 Fast and Memory Efficient Genome Sketching via HyperMinHash and UltraLogLog
 
-lash sketch --file <file> --output <output_prefix> --kmer <kmer_length> --threads <num_threads>-algorighm <algorithm> -precision <precision_ull>
+Usage: lash sketch [OPTIONS] --file <file>
 
 Options:
-  -f, --file <file>                 File containing list of FASTA files
-  -o, --output <output_prefix>      Prefix you would like your output file names to start with
-  -k, --kmer <kmer_length>          Length of k-mers
-  -t, --threads <num_threads>       Number of threads you would like to use. Default to the number of cores on your device
-  -a, --algorithm <algorithm>       Algorithm of choice. Either hmh for hyperminhash, or ull for ultraloglog  
-  -p, --precision <precision_ull>   Precision to use, only for Ultraloglog. Default to 10. 
-  -v, --version                     Print version
+  -f, --file <file>            One file containing list of FASTA/FASTQ files (.gz/.bz2/.zstd supported), one per line. File must be UTF-8.
+  -o, --output <output>        Input a prefix/name for your output files [default: sketch]
+  -k, --kmer <kmer_length>     Length of the kmer [default: 16]
+  -t, --threads <threads>      Number of threads to use [default: 1]
+  -a, --algorithm <algorithm>  Which algorithm to use: HyperMinHash (hmh) or UltraLogLog (ull) [default: hmh]
+  -p, --precision <precision>  Specifiy precision, for ull only. [default: 10]
+  -h, --help                   Print help
 
 
-lash dist --query <query__prefix> --reference <ref_prefix> --output <output_prefix>--threads <num_threads> --estimator <estimator_ull>
+Usage: lash dist [OPTIONS] --query <query> --reference <reference>
+
 Options:
-  -q, --query <query_prefix>        Prefix to search for your query genome files. Should match what you put as "output" from sketch. 
-  -r, --reference <ref_prefix>      Prefix to search for your reference genome files. Should match what you put as "output" from sketch. 
-  -o, --output <output_prefix>      Prefix you would like your output file names to start with
-  -t, --threads <num_threads>       Number of threads you would like to use. Default to the number of cores on your device
-  -e, --estimator <estimator>       Estimator to use, only for Ultraloglog sketches. Either "fgra" for Fast Graph-based Rank Aggregation or "ml" for maximum likelihood estimator, default to "ml".  
-  -v, --version                     Print version
-
-
+  -q, --query <query>              Prefix to search for query genome files
+  -r, --reference <reference>      Prefix to search for reference genome files
+  -o, --output_file <output_file>  Name of output file to write results [default: dist.txt]
+  -t, --threads <threads>          Number of threads to use [default: 1]
+  -e, --estimator <estimator>      Specify estimator (fgra or ml), for ull only [default: fgra]
+  -h, --help                       Print help
 ```
 
 ```bash
