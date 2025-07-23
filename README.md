@@ -1,10 +1,10 @@
-[![Latest Version](https://img.shields.io/crates/v/hypermash?style=for-the-badge&color=mediumpurple&logo=rust)](https://crates.io/crates/hypermash)
+[![Latest Version](https://img.shields.io/crates/v/lash?style=for-the-badge&color=mediumpurple&logo=rust)](https://crates.io/crates/lash)
 
-# Fast and Memory Efficient Genome/Metagenome Sketching via LASH
+# Fast and Memory Efficient Genome/Metagenome Sketching via HyperMinHash and UltraLogLog
 
 Genome sketching can be extremely accurate but requires a huge amount of memory for MinHash-like algorithms. Recently, a new algorithm combining MinHash and HyperLogLog, called HyerMinHash was invented (1), which can perform MinHash in loglog space, a significant decrease in space/memory requirement. Together with [lukaslueg](https://github.com/lukaslueg), we first create a Rust library [hyperminhash](https://github.com/lukaslueg/hyperminhash) and then combine rolling hashing with HyperMinHash for extremely fast processing of genomic sequences. Xxhash3 was used as the underlying hashing technique. 
 
-More recently, an algorithm named Ultraloglog was invented (2). It is similar to Hyperloglog but with up to 28% more space efficiency due to a faster estimator. Ultraloglog also has better compaction when using compressing algorithms. Ultraloglog was implemented with [waynexia] (https://github.com/waynexia). Both HyperMinHash and Ultraloglog are options available for use on our tool. 
+More recently, an algorithm named Ultraloglog was invented (2). It is similar to Hyperloglog but with up to 28% more space efficiency due to a faster estimator. Ultraloglog also has better compaction when using compressing algorithms. Ultraloglog was implemented with [waynexia](https://github.com/waynexia). Both HyperMinHash and Ultraloglog are options available for use on our tool. 
 
 We employed a simple producer-consumer model to also reduce memory requirement for large files, e.g., metagenomic files. Both sketching and distance computation are parallelized to make full use of all CPU threads/cores. 
 
@@ -15,19 +15,19 @@ We hope that you find this tool helpful in your scientific endeavors!
 ## Quick install
 ```bash
 ### pre-compiled binary for Linux
-wget https://github.com/jianshu93/hypermash/releases/download/v0.1.0/hypermash_Linux_x86-64_v0.1.0.zip
-unzip hypermash_Linux_x86-64_v0.1.0.zip
-chomd a+x ./hypermash
-./hypermash -h
+wget https://github.com/jianshu93/lash/releases/download/v0.1.0/lash_Linux_x86-64_v0.1.0.zip
+unzip lash_Linux_x86-64_v0.1.0.zip
+chomd a+x ./lash
+./lash -h
 
 ### Install from cargo, install cargo first here: https://rustup.rs, cargo will be installed by default
-cargo install hypermash
+cargo install lash
 
 ### compiling from source
-git clone https://github.com/jianshu93/hypermash
-cd hypermash
+git clone https://github.com/jianshu93/lash
+cd lash
 cargo build --release
-./target/release/hypermash -h
+./target/release/lash -h
 
 ```
 
@@ -69,7 +69,7 @@ Options:
 ```bash
 ls ./data/*.fasta > query_list_strep.txt
 ls ./data/*.fasta > ref_list_strep.txt
-lash --query_file ./query_list_strep.txt -r ref_list_strep.txt -k 16 -o dist.txt
+lash sketch --query_file ./query_list_strep.txt -r ref_list_strep.txt -k 16
 ```
 
 ## Output
