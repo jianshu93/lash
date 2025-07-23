@@ -21,7 +21,7 @@ chomd a+x ./lash
 ./lash -h
 
 ### Install from cargo, install cargo first here: https://rustup.rs, cargo will be installed by default
-cargo install lash
+cargo install lash-rs
 
 ### compiling from source
 git clone https://github.com/jianshu93/lash

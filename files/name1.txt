@@ -1,0 +1,2 @@
+/Users/claire/Documents/Rust/hypermash/files/Agathobacter_rectalis_ref.fna.gz
+/Users/claire/Documents/Rust/hypermash/files/GCF_013299645.1_ASM1329964v1_genomic.fna.gz
