@@ -4,7 +4,7 @@
 
 Genome sketching can be extremely accurate but requires a huge amount of memory for MinHash-like algorithms. Recently, a new algorithm combining MinHash and HyperLogLog, called HyerMinHash was invented (1), which can perform MinHash in loglog space, a significant decrease in space/memory requirement. Together with [lukaslueg](https://github.com/lukaslueg), we first create a Rust library [hyperminhash](https://github.com/lukaslueg/hyperminhash) and then combine rolling hashing with HyperMinHash for extremely fast processing of genomic sequences. Xxhash3 was used as the underlying hashing technique. 
 
-More recently, an algorithm named Ultraloglog was invented (2). It is similar to Hyperloglog but with up to 28% more space efficiency due to a faster estimator. Ultraloglog also has better compaction when using compressing algorithms. Ultraloglog was implemented with [waynexia](https://github.com/waynexia), see [ultraloglog](https://github.com/waynexia/ultraloglog). Both HyperMinHash and Ultraloglog are options available for use on our tool. 
+More recently, an algorithm named Ultraloglog was invented (2). It is similar to Hyperloglog but with up to 28% more space efficiency due to a better sketch structure. Ultraloglog also has better compaction when using compressing algorithms (e.g., zstd). Ultraloglog was implemented with [waynexia](https://github.com/waynexia), see [ultraloglog](https://github.com/waynexia/ultraloglog). Both HyperMinHash and Ultraloglog are options available for use on our tool. 
 
 We employed a simple producer-consumer model to also reduce memory requirement for large files, e.g., metagenomic files. Both sketching and distance computation are parallelized to make full use of all CPU threads/cores. 
 
