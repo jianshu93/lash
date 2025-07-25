@@ -645,6 +645,8 @@ dependencies = [
  "allocator-api2",
  "equivalent",
  "foldhash",
+ "rayon",
+ "serde",
 ]
 
 [[package]]
@@ -951,6 +953,7 @@ dependencies = [
  "clap",
  "crossbeam-channel",
  "env_logger",
+ "hashbrown",
  "hyperminhash",
  "kmerutils",
  "log",

@@ -4,7 +4,7 @@ use clap::{Arg, ArgAction, Command};
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use std::error::Error;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use xxhash_rust::xxh3::Xxh3Builder;
 use std::fs::File;
 use std::fs;

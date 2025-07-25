@@ -2,7 +2,7 @@ use needletail::parse_fastx_file;
 use rayon::prelude::*;
 use crossbeam_channel::bounded;
 use std::error::Error;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use xxhash_rust::xxh3::Xxh3Builder;
 use std::fs::File;
 use std::sync::{Arc, Mutex};
