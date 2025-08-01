@@ -5,13 +5,14 @@ use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use std::error::Error;
 use hashbrown::HashMap;
-use xxhash_rust::xxh3::Xxh3Builder;
+//use xxhash_rust::xxh3::Xxh3Builder;
 use std::fs::File;
 use std::fs;
 use std::io::{BufReader, Write};
 use zstd::stream::Decoder;
 use std::path::Path;
-
+mod hasher;
+use hasher::Xxh3Builder;
 mod utils;
 use crate::utils::{hmh_distance, hmh_sketch, ull_sketch};
 use ultraloglog::{UltraLogLog, Estimator, MaximumLikelihoodEstimator};
@@ -295,7 +296,8 @@ fn main() -> Result<(), Box<dyn Error>> {
 
                 // function that creates a hashmap holding name of genome and the ull and cardinality for it
                 fn create_ull_map(sketch_file: File, names: &Vec<String>, estimator:&String ) -> Result<HashMap<String, (UltraLogLog, f64), Xxh3Builder>, std::io::Error> {
-                    let mut sketches: HashMap<String, (UltraLogLog, f64), Xxh3Builder> = HashMap::with_hasher(Xxh3Builder::new());
+                    let mut hasher = Xxh3Builder { seed: 93 }; // make sure ref/query pairs are in same order each time
+                    let mut sketches = HashMap::with_hasher(hasher);
                     let reader = BufReader::new(sketch_file);
 
                     // decompress sketches
