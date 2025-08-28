@@ -155,12 +155,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             let result: Result<(), Box<dyn Error>>;
             if alg == "hmh" {
                 // create hypermash object and sketch
-                result = hmh_sketch(sketch_file_name.clone(), kmer_length, output_name.clone());
+                result = hmh_sketch(sketch_file_name.clone(), kmer_length, output_name.clone(), threads as u32);
                 
             }
             else if alg == "ull" {
                 let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
-                result = ull_sketch(precision, sketch_file_name.clone(), kmer_length, output_name.clone());
+                result = ull_sketch(precision, sketch_file_name.clone(), kmer_length, output_name.clone(), threads as u32);
             }
             else { // input for alg is not hmh or ull
                 panic!("Algorithm must be either hmh or ull");

@@ -116,7 +116,7 @@ pub fn hmh_distance(reference_names: Vec<String>, ref_sketch_file: String, kmer_
     Ok(results)
 }
 
-pub fn hmh_sketch(file: String, kmer_length: usize, output_name: String) -> Result<(), Box<dyn Error>> {
+pub fn hmh_sketch(file: String, kmer_length: usize, output_name: String, threads: u32) -> Result<(), Box<dyn Error>> {
 
     //read list of genome paths
     let list_file = File::open(&file)?;
@@ -229,7 +229,7 @@ pub fn hmh_sketch(file: String, kmer_length: usize, output_name: String) -> Resu
     let bin_file = File::create(&out_bin)?;
     let mut writer = BufWriter::new(bin_file);
     let mut encoder = Encoder::new(&mut writer, 3).expect("failed to create compression");
-
+    encoder.multithread(threads).expect("failed to multithread compressor");
     for name in &names {
         sketches[name].save(&mut encoder)?;
     }
@@ -250,7 +250,7 @@ pub fn hmh_sketch(file: String, kmer_length: usize, output_name: String) -> Resu
     Ok(())
 }
 
-pub fn ull_sketch(precision: u32, sketch_file_name: String, kmer_length: usize, output_name: String) -> Result<(), Box<dyn Error>> {
+pub fn ull_sketch(precision: u32, sketch_file_name: String, kmer_length: usize, output_name: String, threads: u32) -> Result<(), Box<dyn Error>> {
     let sketch_file = File::open(sketch_file_name)?;
     let sketch_reader = BufReader::new(sketch_file);
     let files: Vec<String> = sketch_reader
@@ -333,7 +333,7 @@ pub fn ull_sketch(precision: u32, sketch_file_name: String, kmer_length: usize, 
 
     // compress sketches
     let mut encoder = Encoder::new(writer, 3).expect("failed to create compression");
-
+    encoder.multithread(threads).expect("failed to multithread compressor");
     for ull in &ull_vec {
         ull.save(&mut encoder).expect("Failed to save UltraLogLog");
     }

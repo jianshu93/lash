@@ -31,4 +31,4 @@ kmerutils = "0.0.14"
 ultraloglog = { version = "0.1.3" , features = ["serde"]}
 ## ultraloglog = { git = "https://github.com/waynexia/ultraloglog", features = ["serde"] }
 num_cpus = "1.13"
-zstd = "0.13"
+zstd = { version = "0.13", features = ["zstdmt"] }
