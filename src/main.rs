@@ -1,23 +1,22 @@
 use clap::{Arg, ArgAction, Command};
 // use needletail::kmer::Kmers;
 // use needletail::sequence::canonical;
+use hashbrown::HashMap;
 use rayon::prelude::*;
 use rayon::ThreadPoolBuilder;
 use std::error::Error;
-use hashbrown::HashMap;
 //use xxhash_rust::xxh3::Xxh3Builder;
-use std::fs::File;
 use std::fs;
+use std::fs::File;
 use std::io::{BufReader, Write};
-use zstd::stream::Decoder;
 use std::path::Path;
+use zstd::stream::Decoder;
 mod hasher;
-use log::info;
 use hasher::Xxh3Builder;
+use log::info;
 mod utils;
 use crate::utils::{hmh_distance, hmh_sketch, ull_sketch};
-use ultraloglog::{UltraLogLog, Estimator, MaximumLikelihoodEstimator};
-
+use ultraloglog::{Estimator, MaximumLikelihoodEstimator, UltraLogLog};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Initialize logger
@@ -134,7 +133,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .default_value("fgra")
                 .action(ArgAction::Set)
             )
-            
         )
         .get_matches();
 
@@ -143,7 +141,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             // organize the inputs
             let sketch_file_name = s_matches.get_one::<String>("file").expect("required");
             let kmer_length: usize = *s_matches.get_one::<usize>("kmer_length").expect("required");
-            let threads: usize = *s_matches.get_one::<usize>("threads").unwrap_or(&num_cpus::get());
+            let threads: usize = *s_matches
+                .get_one::<usize>("threads")
+                .unwrap_or(&num_cpus::get());
 
             let output_name = s_matches.get_one::<String>("output").expect("required");
             let alg = s_matches.get_one::<String>("algorithm").expect("required");
@@ -156,14 +156,23 @@ fn main() -> Result<(), Box<dyn Error>> {
             let result: Result<(), Box<dyn Error>>;
             if alg == "hmh" {
                 // create hypermash object and sketch
-                result = hmh_sketch(sketch_file_name.clone(), kmer_length, output_name.clone(), threads as u32);
-                
-            }
-            else if alg == "ull" {
+                result = hmh_sketch(
+                    sketch_file_name.clone(),
+                    kmer_length,
+                    output_name.clone(),
+                    threads as u32,
+                );
+            } else if alg == "ull" {
                 let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
-                result = ull_sketch(precision, sketch_file_name.clone(), kmer_length, output_name.clone(), threads as u32);
-            }
-            else { // input for alg is not hmh or ull
+                result = ull_sketch(
+                    precision,
+                    sketch_file_name.clone(),
+                    kmer_length,
+                    output_name.clone(),
+                    threads as u32,
+                );
+            } else {
+                // input for alg is not hmh or ull
                 panic!("Algorithm must be either hmh or ull");
             }
             result
@@ -171,16 +180,16 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some(("dist", s_matches)) => {
             let ref_prefix = s_matches.get_one::<String>("reference").expect("required");
             let query_prefix = s_matches.get_one::<String>("query").expect("required");
-            
+
             fn find_files(prefix: &String) -> std::io::Result<HashMap<&str, String>> {
                 let mut files: Vec<String> = Vec::new();
                 let dir = "./"; // use curent directory
 
                 let norm_prefix = {
                     let p = Path::new(prefix)
-                    .file_name()
-                    .and_then(|os_str| os_str.to_str())
-                    .unwrap_or(prefix);
+                        .file_name()
+                        .and_then(|os_str| os_str.to_str())
+                        .unwrap_or(prefix);
                     // .strip_prefix("./")
                     // .unwrap_or(prefix)
 
@@ -202,48 +211,55 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
 
                 // if files.len() != 3 {
-                //     panic!("There should be 3 files starting with {} but {} were found instead", 
-                //     prefix, 
+                //     panic!("There should be 3 files starting with {} but {} were found instead",
+                //     prefix,
                 //     files.len());
                 // }
                 let mut file_map: HashMap<&str, String> = HashMap::new();
                 for file in files {
                     if file.ends_with("parameters.json") {
-                        file_map.insert("params",file);
-                    }
-                    else if file.ends_with("files.json") {
-                        file_map.insert("files",file);
-                    }
-                    else if file.ends_with(".bin") { // .bin file for sketches
-                        file_map.insert("sketches",file);
+                        file_map.insert("params", file);
+                    } else if file.ends_with("files.json") {
+                        file_map.insert("files", file);
+                    } else if file.ends_with(".bin") {
+                        // .bin file for sketches
+                        file_map.insert("sketches", file);
                     }
                 }
                 if file_map.keys().len() != 3 {
-                    panic!("There should be 3 files starting with {} but {} were found instead", 
-                    norm_prefix, 
-                    file_map.keys().len());
+                    panic!(
+                        "There should be 3 files starting with {} but {} were found instead",
+                        norm_prefix,
+                        file_map.keys().len()
+                    );
                 }
                 Ok(file_map)
             }
-            
-            let output_file: &String = s_matches.get_one::<String>("output_file").expect("required");
-            let threads: usize = *s_matches.get_one::<usize>("threads").unwrap_or(&num_cpus::get());
+
+            let output_file: &String = s_matches
+                .get_one::<String>("output_file")
+                .expect("required");
+            let threads: usize = *s_matches
+                .get_one::<usize>("threads")
+                .unwrap_or(&num_cpus::get());
 
             // go through the files needed, find name file, sketch file, and param file
             let ref_files = find_files(ref_prefix).unwrap();
             let query_files = find_files(query_prefix).unwrap();
             let ref_param_file = ref_files["params"].clone();
             let query_param_file = query_files["params"].clone();
-            
+
             // println!("{}", ref_param_file);
             // println!("{}", query_param_file);
 
             // read in parameter json files into hashmaps
             let contents_ref = fs::read_to_string(ref_param_file).expect("Unable to read file");
             let contents_query = fs::read_to_string(query_param_file).expect("Unable to read file");
-            let ref_map: HashMap<String, String> = serde_json::from_str(&contents_ref).expect("Invalid JSON");
-            let query_map: HashMap<String, String> = serde_json::from_str(&contents_query).expect("Invalid JSON");
-            
+            let ref_map: HashMap<String, String> =
+                serde_json::from_str(&contents_ref).expect("Invalid JSON");
+            let query_map: HashMap<String, String> =
+                serde_json::from_str(&contents_query).expect("Invalid JSON");
+
             // check that parameters match between ref and query genomes
             if ref_map["k"] != query_map["k"] {
                 panic!("Genomes were not sketched with the same k");
@@ -255,10 +271,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 if ref_map["precision"] != query_map["precision"] {
                     panic!("ull was not sketched with same precision btwn genomes")
                 }
-                
             }
             // assign kmer length once k matches
-            let kmer_length:usize = ref_map["k"].parse().expect("Not a valid usize");
+            let kmer_length: usize = ref_map["k"].parse().expect("Not a valid usize");
 
             ThreadPoolBuilder::new()
                 .num_threads(threads)
@@ -277,26 +292,41 @@ fn main() -> Result<(), Box<dyn Error>> {
             let query_namefile = query_files["files"].clone();
             let query_sketch_file_name = query_files["sketches"].clone();
             let query_names: Vec<String> = read_names(&query_namefile)
-                            .expect(&format!("Error with reading from {}", query_namefile));
-            
+                .expect(&format!("Error with reading from {}", query_namefile));
+
             // create reference sketch hashmap
             let ref_namefile = ref_files["files"].clone();
             let ref_sketch_file_name = ref_files["sketches"].clone();
             let reference_names: Vec<String> = read_names(&ref_namefile)
-                            .expect(&format!("Error with reading from {}", ref_namefile));
-            
+                .expect(&format!("Error with reading from {}", ref_namefile));
+
             let mut results: Vec<(String, String, f64)> = Vec::new();
             if ref_map["algorithm"] == "hmh" {
-                results = hmh_distance(reference_names, ref_sketch_file_name, kmer_length, query_names, query_sketch_file_name).unwrap();
-            }
-            else if ref_map["algorithm"] == "ull" {
-                
-                let ref_sketch_file = File::open(ref_sketch_file_name).expect("Failed to open file");
-                let query_sketch_file = File::open(query_sketch_file_name).expect("Failed to open file");
-                let estimator = s_matches.get_one::<String>("estimator").cloned().unwrap_or_else(|| "fgra".to_string());
+                results = hmh_distance(
+                    reference_names,
+                    ref_sketch_file_name,
+                    kmer_length,
+                    query_names,
+                    query_sketch_file_name,
+                )
+                .unwrap();
+            } else if ref_map["algorithm"] == "ull" {
+                let ref_sketch_file =
+                    File::open(ref_sketch_file_name).expect("Failed to open file");
+                let query_sketch_file =
+                    File::open(query_sketch_file_name).expect("Failed to open file");
+                let estimator = s_matches
+                    .get_one::<String>("estimator")
+                    .cloned()
+                    .unwrap_or_else(|| "fgra".to_string());
 
                 // function that creates a hashmap holding name of genome and the ull and cardinality for it
-                fn create_ull_map(sketch_file: File, names: &Vec<String>, estimator:&String ) -> Result<HashMap<String, (UltraLogLog, f64), Xxh3Builder>, std::io::Error> {
+                fn create_ull_map(
+                    sketch_file: File,
+                    names: &Vec<String>,
+                    estimator: &String,
+                ) -> Result<HashMap<String, (UltraLogLog, f64), Xxh3Builder>, std::io::Error>
+                {
                     let mut hasher = Xxh3Builder { seed: 93 }; // make sure ref/query pairs are in same order each time
                     let mut sketches = HashMap::with_hasher(hasher);
                     let reader = BufReader::new(sketch_file);
@@ -314,33 +344,35 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                     Ok(sketches)
                 }
-                let ref_map = create_ull_map(ref_sketch_file, &reference_names, &estimator).unwrap();
-                let query_map = create_ull_map(query_sketch_file, &query_names, &estimator).unwrap();
-                
+                let ref_map =
+                    create_ull_map(ref_sketch_file, &reference_names, &estimator).unwrap();
+                let query_map =
+                    create_ull_map(query_sketch_file, &query_names, &estimator).unwrap();
+
                 // create all pairs between reference and query
-                let pairs: Vec<(&str, &str)> = ref_map.keys()
-                    .flat_map(|k1| {
-                        query_map.keys().map(move |k2| (k1.as_str(), k2.as_str()))
-                    })
+                let pairs: Vec<(&str, &str)> = ref_map
+                    .keys()
+                    .flat_map(|k1| query_map.keys().map(move |k2| (k1.as_str(), k2.as_str())))
                     .collect();
-                
+
                 results = pairs
                     .par_iter()
                     .map(|&(reference_name, query_name)| {
                         let a: f64 = ref_map[reference_name].1; // cardinality of reference
-                        //println!("{}", a);
+                                                                //println!("{}", a);
                         let b: f64 = query_map[query_name].1; // cardinality of query
-                        //println!("{}", b);
+                                                              //println!("{}", b);
                         let union_ull = UltraLogLog::merge(
-                            &ref_map[reference_name].0, 
-                            &query_map[query_name].0,)
-                            .expect("failed to merge sketches");
+                            &ref_map[reference_name].0,
+                            &query_map[query_name].0,
+                        )
+                        .expect("failed to merge sketches");
 
                         let union_count = union_ull.get_distinct_count_estimate();
 
                         // for debugging
                         info!("Union: {}, a: {}, b: {}", union_count, a, b);
-                        
+
                         let similarity = (a + b - union_count) / union_count;
                         let adjusted_similarity = if similarity <= 0.0 {
                             std::f64::EPSILON // Small positive number to avoid log(0)
@@ -354,7 +386,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                         (reference_name.to_string(), query_name.to_string(), distance)
                     })
                     .collect();
-            } 
+            }
 
             // Open the output file for writing
             let mut output = File::create(format!("{}.txt", output_file))?;
@@ -380,14 +412,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                 } else {
                     *distance
                 };
-                writeln!(output, "{}\t{}\t{:.6}", query_name, reference_name, distance)?;
+                writeln!(
+                    output,
+                    "{}\t{}\t{:.6}",
+                    query_name, reference_name, distance
+                )?;
             }
             println!("Distances computed.");
             Ok(())
         }
-        _ => {
-            Ok(())
-        }
+        _ => Ok(()),
     }
 }
-    
