@@ -151,13 +151,10 @@ pub fn hmh_sketch(
         .par_iter()
         .map(|fname| {
             let file_name = fname.clone();
-
             // streaming reader for this file
             let mut reader = parse_fastx_file(&file_name).expect("Failed to parse file");
-
             // bounded channel for batches of sequences
             let (sender, receiver) = bounded::<Vec<Vec<u8>>>(64);
-
             // spawn producer thread
             let producer = thread::spawn(move || {
                 let mut batch: Vec<Vec<u8>> = Vec::with_capacity(5000);
@@ -176,10 +173,8 @@ pub fn hmh_sketch(
                     let _ = sender.send(batch);
                 }
             });
-
             // one global sketch per file behind a mutex
             let global = Arc::new(Mutex::new(Sketch::default()));
-
             // consume batches
             for batch in receiver {
                 // process each sequence in batch in parallel
@@ -190,7 +185,6 @@ pub fn hmh_sketch(
                     }
                     let kseq = KSeq::new(&seq_vec, 2);
                     let mut local = Sketch::default();
-
                     if kmer_length <= 14 {
                         let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
                         while let Some(km) = it.next() {
@@ -217,7 +211,6 @@ pub fn hmh_sketch(
                     } else {
                         panic!("k-mer length must be 1–32, k=15 is not supported");
                     }
-
                     // merge local into global
                     {
                         let mut g = global.lock().unwrap();
@@ -225,15 +218,12 @@ pub fn hmh_sketch(
                     }
                 });
             }
-
             producer.join().expect("Producer thread panicked");
-
             // unwrap final sketch
             let final_sketch = Arc::try_unwrap(global)
                 .expect("Arc still has multiple refs")
                 .into_inner()
                 .unwrap();
-
             (file_name, final_sketch)
         })
         .collect();
