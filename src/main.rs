@@ -12,6 +12,7 @@ use std::io::{BufReader, Write};
 use zstd::stream::Decoder;
 use std::path::Path;
 mod hasher;
+use log::info;
 use hasher::Xxh3Builder;
 mod utils;
 use crate::utils::{hmh_distance, hmh_sketch, ull_sketch};
@@ -335,8 +336,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                             &query_map[query_name].0,)
                             .expect("failed to merge sketches");
 
-                        let union = union_ull.get_distinct_count_estimate();
-                        let similarity = (a + b - union) / union;
+                        let union_count = union_ull.get_distinct_count_estimate();
+
+                        // for debugging
+                        info!("Union: {}, a: {}, b: {}", union_count, a, b);
+                        
+                        let similarity = (a + b - union_count) / union_count;
                         let adjusted_similarity = if similarity <= 0.0 {
                             std::f64::EPSILON // Small positive number to avoid log(0)
                         } else {

@@ -14,6 +14,7 @@ use zstd::stream::{Encoder, Decoder};
 use crate::hasher::Xxh3Builder;
 // use std::path::Path;
 use hyperminhash::Sketch;
+use log::info;
 use serde_json::{to_writer_pretty};
 use serde_json::json;
 use kmerutils::base::{
@@ -103,6 +104,10 @@ pub fn hmh_distance(reference_names: Vec<String>, ref_sketch_file: String, kmer_
             } else {
                 similarity
             };
+
+            // for debugging
+            info!("Union: {}, a: {}, b: {}", reference_sketch.clone().union(query_sketch).cardinality(), 
+                reference_sketch.cardinality(), query_sketch.cardinality());
 
             // Calculate distance using the provided formula
             let numerator = 2.0 * adjusted_similarity;
