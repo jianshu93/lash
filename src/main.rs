@@ -15,8 +15,9 @@ mod hasher;
 use hasher::Xxh3Builder;
 use log::info;
 mod utils;
-use crate::utils::{hmh_distance, hmh_sketch, ull_sketch};
+use crate::utils::{hmh_distance, hmh_sketch, ull_sketch, hll_sketch};
 use ultraloglog::{Estimator, MaximumLikelihoodEstimator, UltraLogLog};
+
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Initialize logger
@@ -70,7 +71,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Arg::new("algorithm")
                 .short('a')
                 .long("algorithm")
-                .help("Which algorithm to use: HyperMinHash (hmh) or UltraLogLog (ull)")
+                .help("Which algorithm to use: HyperMinHash (hmh), UltraLogLog (ull), or HyperLogLog (hll)")
                 .required(false)
                 .default_value("hmh")
                 .action(ArgAction::Set)
@@ -162,7 +163,17 @@ fn main() -> Result<(), Box<dyn Error>> {
                     output_name.clone(),
                     threads as u32,
                 );
-            } else if alg == "ull" {
+            } else if alg == "hll" {
+                let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
+                result = hll_sketch(
+                    precision,
+                    sketch_file_name.clone(),
+                    kmer_length,
+                    output_name.clone(),
+                    threads as u32,
+                );
+            }
+            else if alg == "ull" {
                 let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
                 result = ull_sketch(
                     precision,

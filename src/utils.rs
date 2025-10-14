@@ -23,6 +23,7 @@ use kmerutils::base::{
 use log::info;
 use serde_json::json;
 use serde_json::to_writer_pretty;
+use streaming_algorithms::{HyperLogLog};
 
 pub fn filter_out_n(seq: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(seq.len());
@@ -257,6 +258,123 @@ pub fn hmh_sketch(
     param_file.write_all(serde_json::to_string_pretty(&params).unwrap().as_bytes())?;
 
     println!("Serialized sketches with hmh");
+    Ok(())
+}
+
+pub fn hll_sketch(
+    precision: u32,
+    sketch_file_name: String,
+    kmer_length: usize,
+    output_name: String,
+    threads: u32,
+) -> Result<(), Box<dyn Error>> { 
+    let sketch_file = File::open(sketch_file_name)?;
+    let sketch_reader = BufReader::new(sketch_file);
+    let files: Vec<String> = sketch_reader
+        .lines()
+        .filter_map(|line| line.ok())
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+
+    // use push_hash64 to add sketched pieces
+    let hll_vec: Vec<HyperLogLog<i64>> = files
+        .par_iter()
+        .map(|file| {
+            let hll = Mutex::new(HyperLogLog::with_p(precision as u8));
+            let mut reader = parse_fastx_file(file).expect("Invalid input file");
+            let (sender, receiver) = crossbeam_channel::bounded(64); // Channel with capacity 10
+            // Spawn a thread to read sequences and send batches
+            let reader_thread = thread::spawn(move || {
+                let mut batch = Vec::new();
+                while let Some(result) = reader.next() {
+                    if let Ok(seqrec) = result {
+                        batch.push(seqrec.seq().to_vec());
+                        if batch.len() == 5000 {
+                            if sender.send(batch.clone()).is_err() {
+                                break; // Receiver has hung up
+                            }
+                            batch.clear();
+                        }
+                    }
+                }
+                if !batch.is_empty() {
+                    let _ = sender.send(batch); // Send remaining batch
+                }
+            });
+
+            for batch in receiver {
+                batch.par_iter().for_each(|seq| {
+                    let seq_vec: Vec<u8> = filter_out_n(&seq);
+                    let kseq = KSeq::new(&seq_vec, 2);
+                    let mut hll_guard = hll.lock().unwrap();
+                    if kmer_length <= 14 {
+                        let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked =
+                                mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                            let hash64 = xxh3_64(&masked.to_le_bytes());
+                            hll_guard.push_hash64(hash64);
+                        }
+                    } else if kmer_length == 16 {
+                        let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked =
+                                mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                            let hash64 = xxh3_64(&masked.to_le_bytes());
+                            hll_guard.push_hash64(hash64);
+                        }
+                    } else if kmer_length <= 32 {
+                        let mut it = KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(canon.get_compressed_value(), kmer_length);
+                            let hash64 = xxh3_64(&masked.to_le_bytes());
+                            hll_guard.push_hash64(hash64);
+                        }
+                    } else {
+                        panic!("k-mer length must be 1–32, k=15 is not supported");
+                    }
+                })
+            }
+            reader_thread.join().expect("Reader thread panicked");
+            let hll_final = Mutex::into_inner(hll).unwrap();
+            hll_final
+        })
+        .collect();
+
+    let sketch_output =
+    File::create(format!("{}_sketches.bin", &output_name)).expect("Failed to create file");
+    let writer = BufWriter::new(sketch_output);
+
+    // compress sketches
+    let mut encoder = Encoder::new(writer, 3).expect("failed to create compression");
+    encoder
+        .multithread(threads)
+        .expect("failed to multithread compressor");
+    for hll in &hll_vec {
+        hll.clone().save(&mut encoder).expect("Failed to save UltraLogLog");
+    }
+    encoder.finish().expect("failed to compress");
+
+    // write all file names to a json file
+    to_writer_pretty(
+        &File::create(format!("{}_files.json", &output_name))?,
+        &files,
+    )?;
+
+    // save a json of parameters used
+    let data = json!({
+        "k": kmer_length.to_string(),
+        "algorithm": "hll",
+        "precision": precision.to_string(),
+    });
+    let json_str = serde_json::to_string_pretty(&data).unwrap();
+    let mut param_file = File::create(format!("{}_parameters.json", output_name))?;
+    param_file.write_all(json_str.as_bytes())?;
+
+    println!("Serialized sketches with hll");
     Ok(())
 }
 
