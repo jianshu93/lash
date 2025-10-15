@@ -1831,9 +1831,9 @@ checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
 name = "streaming_algorithms"
-version = "0.3.2"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "428e7bb616b12425f721ce958b636dbacf748edb6673600c5068ae9dd37c5be4"
+checksum = "85d53471a52d669b6c87a304df3702c7466b5623da38c7fd43241a9257dd551f"
 dependencies = [
  "bincode",
  "rand 0.7.3",

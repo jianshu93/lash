@@ -378,6 +378,81 @@ pub fn hll_sketch(
     Ok(())
 }
 
+pub fn hll_distance(
+    reference_names: Vec<String>,
+    ref_sketch_file: String,
+    kmer_length: usize,
+    query_names: Vec<String>,
+    query_sketch_file: String,
+) -> Result<Vec<(String, String, f64)>, Box<dyn Error>> {
+    
+    let ref_sketch_file =
+        File::open(ref_sketch_file).expect("Failed to open file");
+    let query_sketch_file =
+        File::open(query_sketch_file).expect("Failed to open file");
+
+    // function that creates a hashmap holding name of genome and the ull and cardinality for it
+    fn create_ull_map(
+        sketch_file: File,
+        names: &Vec<String>
+    ) -> Result<HashMap<String, (HyperLogLog<i64>, f64), Xxh3Builder>, std::io::Error>
+    {
+        let mut hasher = Xxh3Builder { seed: 93 }; // make sure ref/query pairs are in same order each time
+        let mut sketches = HashMap::with_hasher(hasher);
+        let reader = BufReader::new(sketch_file);
+
+        // decompress sketches
+        let mut decoder = Decoder::new(reader).expect("failed to create decompressor");
+        for file in names {
+            let hll = HyperLogLog::load(&mut decoder)?;
+            let count = hll.len();
+            sketches.insert(file.clone(), (hll, count));
+        }
+        Ok(sketches)
+    }
+    let ref_map =
+        create_ull_map(ref_sketch_file, &reference_names).unwrap();
+    let query_map =
+        create_ull_map(query_sketch_file, &query_names).unwrap();
+
+    // create all pairs between reference and query
+    let pairs: Vec<(&str, &str)> = ref_map
+        .keys()
+        .flat_map(|k1| query_map.keys().map(move |k2| (k1.as_str(), k2.as_str())))
+        .collect();
+
+    let results = pairs
+        .par_iter()
+        .map(|&(reference_name, query_name)| {
+            let a: f64 = ref_map[reference_name].1; // cardinality of reference
+                                                    //println!("{}", a);
+            let b: f64 = query_map[query_name].1; // cardinality of query
+                                                    //println!("{}", b);
+            let mut ref_hll = ref_map[reference_name].0.clone();
+            let q_hll = &query_map[query_name].0;
+            ref_hll.union(q_hll);
+            let union_count = ref_hll.len();
+
+            // for debugging
+            info!("Union: {}, a: {}, b: {}", union_count, a, b);
+
+            let similarity = (a + b - union_count) / union_count;
+            let adjusted_similarity = if similarity <= 0.0 {
+                std::f64::EPSILON // Small positive number to avoid log(0)
+            } else {
+                similarity
+            };
+            let numerator: f64 = 2.0 * adjusted_similarity;
+            let denominator: f64 = 1.0 + adjusted_similarity;
+            let fraction: f64 = numerator / denominator;
+            let distance: f64 = -fraction.ln() / (kmer_length as f64);
+            (reference_name.to_string(), query_name.to_string(), distance)
+        })
+        .collect();
+
+    Ok(results)
+}
+
 pub fn ull_sketch(
     precision: u32,
     sketch_file_name: String,

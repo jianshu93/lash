@@ -15,7 +15,7 @@ mod hasher;
 use hasher::Xxh3Builder;
 use log::info;
 mod utils;
-use crate::utils::{hmh_distance, hmh_sketch, ull_sketch, hll_sketch};
+use crate::utils::{hmh_distance, hmh_sketch, ull_sketch, hll_sketch, hll_distance};
 use ultraloglog::{Estimator, MaximumLikelihoodEstimator, UltraLogLog};
 
 
@@ -80,7 +80,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Arg::new("precision")
                 .short('p')
                 .long("precision")
-                .help("Specifiy precision, for ull only.")
+                .help("Specifiy precision, for ull and hll only.")
                 .required(false)
                 .value_parser(clap::value_parser!(usize))
                 .default_value("10")
@@ -278,7 +278,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             if ref_map["algorithm"] != query_map["algorithm"] {
                 panic!("Algorithms do not match in query and sketch genomes")
             }
-            if ref_map["algorithm"] == "ull" {
+            if ref_map["algorithm"] == "ull" || ref_map["algorithm"] == "hll" {
                 if ref_map["precision"] != query_map["precision"] {
                     panic!("ull was not sketched with same precision btwn genomes")
                 }
@@ -321,7 +321,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     query_sketch_file_name,
                 )
                 .unwrap();
-            } else if ref_map["algorithm"] == "ull" {
+            }
+            else if ref_map["algorithm"] == "ull" {
                 let ref_sketch_file =
                     File::open(ref_sketch_file_name).expect("Failed to open file");
                 let query_sketch_file =
@@ -397,6 +398,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                         (reference_name.to_string(), query_name.to_string(), distance)
                     })
                     .collect();
+            }
+            else {
+                results = hll_distance(
+                    reference_names,
+                    ref_sketch_file_name,
+                    kmer_length,
+                    query_names,
+                    query_sketch_file_name,
+                )
+                .unwrap();
             }
 
             // Open the output file for writing
