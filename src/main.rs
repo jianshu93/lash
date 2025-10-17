@@ -15,9 +15,8 @@ mod hasher;
 use hasher::Xxh3Builder;
 use log::info;
 mod utils;
-use crate::utils::{hmh_distance, hmh_sketch, ull_sketch, hll_sketch, hll_distance};
+use crate::utils::{hll_distance, hll_sketch, hmh_distance, hmh_sketch, ull_sketch};
 use ultraloglog::{Estimator, MaximumLikelihoodEstimator, UltraLogLog};
-
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Initialize logger
@@ -172,8 +171,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     output_name.clone(),
                     threads as u32,
                 );
-            }
-            else if alg == "ull" {
+            } else if alg == "ull" {
                 let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
                 result = ull_sketch(
                     precision,
@@ -311,134 +309,102 @@ fn main() -> Result<(), Box<dyn Error>> {
             let reference_names: Vec<String> = read_names(&ref_namefile)
                 .expect(&format!("Error with reading from {}", ref_namefile));
 
-            let mut results: Vec<(String, String, f64)> = Vec::new();
-            if ref_map["algorithm"] == "hmh" {
-                results = hmh_distance(
+            // let mut results: Vec<(String, String, f64)> = Vec::new();
+            // --- compute all pairwise distances into a single results Vec
+            let results: Vec<(String, String, f64)> = if ref_map["algorithm"] == "hmh" {
+                hmh_distance(
                     reference_names,
                     ref_sketch_file_name,
                     kmer_length,
                     query_names,
                     query_sketch_file_name,
-                )
-                .unwrap();
-            }
-            else if ref_map["algorithm"] == "ull" {
-                let ref_sketch_file =
-                    File::open(ref_sketch_file_name).expect("Failed to open file");
-                let query_sketch_file =
-                    File::open(query_sketch_file_name).expect("Failed to open file");
+                ).unwrap()
+            } else if ref_map["algorithm"] == "ull" {
+                // ULL: build maps, pairs, and compute
+                let ref_sketch_file = File::open(ref_sketch_file_name).expect("Failed to open file");
+                let query_sketch_file = File::open(query_sketch_file_name).expect("Failed to open file");
                 let estimator = s_matches
                     .get_one::<String>("estimator")
                     .cloned()
                     .unwrap_or_else(|| "fgra".to_string());
 
-                // function that creates a hashmap holding name of genome and the ull and cardinality for it
                 fn create_ull_map(
                     sketch_file: File,
                     names: &Vec<String>,
                     estimator: &String,
-                ) -> Result<HashMap<String, (UltraLogLog, f64), Xxh3Builder>, std::io::Error>
-                {
-                    let mut hasher = Xxh3Builder { seed: 93 }; // make sure ref/query pairs are in same order each time
+                ) -> Result<HashMap<String, (UltraLogLog, f64), Xxh3Builder>, std::io::Error> {
+                    let hasher = Xxh3Builder { seed: 93 };
                     let mut sketches = HashMap::with_hasher(hasher);
                     let reader = BufReader::new(sketch_file);
-
-                    // decompress sketches
                     let mut decoder = Decoder::new(reader).expect("failed to create decompressor");
                     for file in names {
-                        let ref_ull = UltraLogLog::load(&mut decoder)?;
+                        let ull = UltraLogLog::load(&mut decoder)?;
                         let c: f64 = match estimator.as_str() {
-                            "fgra" => ref_ull.get_distinct_count_estimate(),
-                            "ml" => MaximumLikelihoodEstimator.estimate(&ref_ull),
-                            _ => panic!("estimator needs to be either fgra or ml"),
+                            "fgra" => ull.get_distinct_count_estimate(),
+                            "ml"   => MaximumLikelihoodEstimator.estimate(&ull),
+                            _      => panic!("estimator needs to be either fgra or ml"),
                         };
-                        sketches.insert(file.clone(), (ref_ull, c));
+                        sketches.insert(file.clone(), (ull, c));
                     }
                     Ok(sketches)
                 }
-                let ref_map =
-                    create_ull_map(ref_sketch_file, &reference_names, &estimator).unwrap();
-                let query_map =
-                    create_ull_map(query_sketch_file, &query_names, &estimator).unwrap();
 
-                // create all pairs between reference and query
+                let ref_map = create_ull_map(ref_sketch_file, &reference_names, &estimator).unwrap();
+                let query_map = create_ull_map(query_sketch_file, &query_names, &estimator).unwrap();
+
                 let pairs: Vec<(&str, &str)> = ref_map
                     .keys()
                     .flat_map(|k1| query_map.keys().map(move |k2| (k1.as_str(), k2.as_str())))
                     .collect();
 
-                results = pairs
-                    .par_iter()
-                    .map(|&(reference_name, query_name)| {
-                        let a: f64 = ref_map[reference_name].1; // cardinality of reference
-                                                                //println!("{}", a);
-                        let b: f64 = query_map[query_name].1; // cardinality of query
-                                                              //println!("{}", b);
-                        let union_ull = UltraLogLog::merge(
-                            &ref_map[reference_name].0,
-                            &query_map[query_name].0,
-                        )
-                        .expect("failed to merge sketches");
+                pairs.par_iter()
+                    .map(|&(ref_name, qry_name)| {
+                        let a: f64 = ref_map[ref_name].1;
+                        let b: f64 = query_map[qry_name].1;
 
+                        let union_ull = UltraLogLog::merge(&ref_map[ref_name].0, &query_map[qry_name].0)
+                            .expect("failed to merge sketches");
                         let union_count = union_ull.get_distinct_count_estimate();
 
-                        // for debugging
                         info!("Union: {}, a: {}, b: {}", union_count, a, b);
 
                         let similarity = (a + b - union_count) / union_count;
-                        let adjusted_similarity = if similarity <= 0.0 {
-                            std::f64::EPSILON // Small positive number to avoid log(0)
-                        } else {
-                            similarity
-                        };
-                        let numerator: f64 = 2.0 * adjusted_similarity;
-                        let denominator: f64 = 1.0 + adjusted_similarity;
-                        let fraction: f64 = numerator / denominator;
-                        let distance: f64 = -fraction.ln() / (kmer_length as f64);
-                        (reference_name.to_string(), query_name.to_string(), distance)
+                        let s = if similarity <= 0.0 { std::f64::EPSILON } else { similarity };
+                        let distance = -( (2.0*s) / (1.0 + s) ).ln() / (kmer_length as f64);
+
+                        (ref_name.to_string(), qry_name.to_string(), distance)
                     })
-                    .collect();
-            }
-            else {
-                results = hll_distance(
+                    .collect()
+            } else {
+                // HLL
+                hll_distance(
                     reference_names,
                     ref_sketch_file_name,
                     kmer_length,
                     query_names,
                     query_sketch_file_name,
-                )
-                .unwrap();
-            }
+                ).unwrap()
+            };
 
-            // Open the output file for writing
-            let mut output = File::create(format!("{}.txt", output_file))?;
-
-            // Write header line
+            // --- write output ---
+            let mut output = File::create(output_file)?; // don't append ".txt" again
             writeln!(output, "Query\tReference\tDistance")?;
 
-            // Write the results with file path normalization
-            for (query_name, reference_name, distance) in &results {
-                // Extract file names from the paths
-                let query_basename = Path::new(&query_name)
+            // results are (reference, query, distance)
+            for (reference_name, query_name, distance) in &results {
+                let query_basename = Path::new(query_name.as_str())
                     .file_name()
                     .and_then(|os_str| os_str.to_str())
-                    .unwrap_or(&query_name);
+                    .unwrap_or(query_name.as_str());
 
-                let reference_basename = Path::new(&reference_name)
+                let reference_basename = Path::new(reference_name.as_str())
                     .file_name()
                     .and_then(|os_str| os_str.to_str())
-                    .unwrap_or(&reference_name);
+                    .unwrap_or(reference_name.as_str());
 
-                let distance = if query_basename == reference_basename {
-                    0.0
-                } else {
-                    *distance
-                };
-                writeln!(
-                    output,
-                    "{}\t{}\t{:.6}",
-                    query_name, reference_name, distance
-                )?;
+                let d = if query_basename == reference_basename { 0.0 } else { *distance };
+
+                writeln!(output, "{}\t{}\t{:.6}", query_name, reference_name, d)?;
             }
             println!("Distances computed.");
             Ok(())

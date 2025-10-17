@@ -23,7 +23,7 @@ use kmerutils::base::{
 use log::info;
 use serde_json::json;
 use serde_json::to_writer_pretty;
-use streaming_algorithms::{HyperLogLog};
+use streaming_algorithms::HyperLogLog;
 
 pub fn filter_out_n(seq: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(seq.len());
@@ -267,7 +267,7 @@ pub fn hll_sketch(
     kmer_length: usize,
     output_name: String,
     threads: u32,
-) -> Result<(), Box<dyn Error>> { 
+) -> Result<(), Box<dyn Error>> {
     let sketch_file = File::open(sketch_file_name)?;
     let sketch_reader = BufReader::new(sketch_file);
     let files: Vec<String> = sketch_reader
@@ -283,7 +283,7 @@ pub fn hll_sketch(
             let hll = Mutex::new(HyperLogLog::with_p(precision as u8));
             let mut reader = parse_fastx_file(file).expect("Invalid input file");
             let (sender, receiver) = crossbeam_channel::bounded(64); // Channel with capacity 10
-            // Spawn a thread to read sequences and send batches
+                                                                     // Spawn a thread to read sequences and send batches
             let reader_thread = thread::spawn(move || {
                 let mut batch = Vec::new();
                 while let Some(result) = reader.next() {
@@ -345,7 +345,7 @@ pub fn hll_sketch(
         .collect();
 
     let sketch_output =
-    File::create(format!("{}_sketches.bin", &output_name)).expect("Failed to create file");
+        File::create(format!("{}_sketches.bin", &output_name)).expect("Failed to create file");
     let writer = BufWriter::new(sketch_output);
 
     // compress sketches
@@ -354,7 +354,9 @@ pub fn hll_sketch(
         .multithread(threads)
         .expect("failed to multithread compressor");
     for hll in &hll_vec {
-        hll.clone().save(&mut encoder).expect("Failed to save UltraLogLog");
+        hll.clone()
+            .save(&mut encoder)
+            .expect("Failed to save UltraLogLog");
     }
     encoder.finish().expect("failed to compress");
 
@@ -385,19 +387,15 @@ pub fn hll_distance(
     query_names: Vec<String>,
     query_sketch_file: String,
 ) -> Result<Vec<(String, String, f64)>, Box<dyn Error>> {
-    
-    let ref_sketch_file =
-        File::open(ref_sketch_file).expect("Failed to open file");
-    let query_sketch_file =
-        File::open(query_sketch_file).expect("Failed to open file");
+    let ref_sketch_file = File::open(ref_sketch_file).expect("Failed to open file");
+    let query_sketch_file = File::open(query_sketch_file).expect("Failed to open file");
 
     // function that creates a hashmap holding name of genome and the ull and cardinality for it
     fn create_ull_map(
         sketch_file: File,
-        names: &Vec<String>
-    ) -> Result<HashMap<String, (HyperLogLog<i64>, f64), Xxh3Builder>, std::io::Error>
-    {
-        let mut hasher = Xxh3Builder { seed: 93 }; // make sure ref/query pairs are in same order each time
+        names: &Vec<String>,
+    ) -> Result<HashMap<String, (HyperLogLog<i64>, f64), Xxh3Builder>, std::io::Error> {
+        let hasher = Xxh3Builder { seed: 93 }; // make sure ref/query pairs are in same order each time
         let mut sketches = HashMap::with_hasher(hasher);
         let reader = BufReader::new(sketch_file);
 
@@ -410,10 +408,8 @@ pub fn hll_distance(
         }
         Ok(sketches)
     }
-    let ref_map =
-        create_ull_map(ref_sketch_file, &reference_names).unwrap();
-    let query_map =
-        create_ull_map(query_sketch_file, &query_names).unwrap();
+    let ref_map = create_ull_map(ref_sketch_file, &reference_names).unwrap();
+    let query_map = create_ull_map(query_sketch_file, &query_names).unwrap();
 
     // create all pairs between reference and query
     let pairs: Vec<(&str, &str)> = ref_map
@@ -427,7 +423,7 @@ pub fn hll_distance(
             let a: f64 = ref_map[reference_name].1; // cardinality of reference
                                                     //println!("{}", a);
             let b: f64 = query_map[query_name].1; // cardinality of query
-                                                    //println!("{}", b);
+                                                  //println!("{}", b);
             let mut ref_hll = ref_map[reference_name].0.clone();
             let q_hll = &query_map[query_name].0;
             ref_hll.union(q_hll);
