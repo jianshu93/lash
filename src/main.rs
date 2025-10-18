@@ -181,8 +181,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     threads as u32,
                 );
             } else {
-                // input for alg is not hmh or ull
-                panic!("Algorithm must be either hmh or ull");
+                // input for alg is not hmh, ull, or hll
+                panic!("Algorithm must be either hmh, ull, or hll");
             }
             result
         }
@@ -278,7 +278,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             if ref_map["algorithm"] == "ull" || ref_map["algorithm"] == "hll" {
                 if ref_map["precision"] != query_map["precision"] {
-                    panic!("ull was not sketched with same precision btwn genomes")
+                    panic!("{} was not sketched with same precision btwn genomes", ref_map["algorithm"]);
                 }
             }
             // assign kmer length once k matches

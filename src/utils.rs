@@ -276,7 +276,6 @@ pub fn hll_sketch(
         .filter(|line| !line.trim().is_empty())
         .collect();
 
-    // use push_hash64 to add sketched pieces
     let hll_vec: Vec<HyperLogLog<i64>> = files
         .par_iter()
         .map(|file| {
@@ -307,6 +306,8 @@ pub fn hll_sketch(
                     let seq_vec: Vec<u8> = filter_out_n(&seq);
                     let kseq = KSeq::new(&seq_vec, 2);
                     let mut hll_guard = hll.lock().unwrap();
+
+                    // use push_hash64 to add sketched pieces
                     if kmer_length <= 14 {
                         let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
                         while let Some(km) = it.next() {
@@ -390,7 +391,7 @@ pub fn hll_distance(
     let ref_sketch_file = File::open(ref_sketch_file).expect("Failed to open file");
     let query_sketch_file = File::open(query_sketch_file).expect("Failed to open file");
 
-    // function that creates a hashmap holding name of genome and the ull and cardinality for it
+    // function that creates a hashmap holding name of genome and the hll and cardinality for it
     fn create_ull_map(
         sketch_file: File,
         names: &Vec<String>,
