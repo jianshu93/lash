@@ -75,5 +75,5 @@ Output format is the same with Mash, first column query, second column reference
 
 ## References
 1. Yu YW, Weber GM. Hyperminhash: Minhash in loglog space. IEEE Transactions on Knowledge and Data Engineering. 2020 Mar 17;34(1):328-39.
-2. Baker, D.N., Langmead, B. Dashing: fast and accurate genomic distances with HyperLogLog. Genome Biol 20, 265 (2019).
+2. Flajolet P, Fusy É, Gandouet O, Meunier F. HyperLogLog: the analysis of a near-optimal cardinality estimation algorithm. Discrete Mathematics & Theoretical Computer Science, Proceedings of the 2007 Conference on Analysis of Algorithms (AofA 07). 2007;AH:127–46.
 3. Ertl O. UltraLogLog: A Practical and More Space-Efficient Alternative to HyperLogLog for Approximate Distinct Counting. Proceedings of the VLDB Endowment. 2024 March 1;17(7):1655-1668. 
