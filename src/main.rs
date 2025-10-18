@@ -23,9 +23,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     println!("\n ************** initializing logger *****************\n");
     env_logger::Builder::from_default_env().init();
     // Set up the command-line arguments
-    let matches = Command::new("Genome Sketching via HyperMinhash and UltraLogLog")
-        .version("0.1.0")
-        .about("Fast and Memory Efficient (Meta)genome Sketching via HyperMinhash and UltraLogLog")
+    let matches = Command::new("Genome Sketching via HyperLogLog, HyperMinhash and UltraLogLog")
+        .version("0.1.3")
+        .about("Fast and Memory Efficient (Meta)genome Sketching via HyperLogLog, HyperMinhash and UltraLogLog")
         .subcommand(
             Command::new("sketch")
             .about("Sketches genomes and serializes them, sketches are compressed")
