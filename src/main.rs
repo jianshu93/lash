@@ -364,7 +364,13 @@ fn main() -> Result<(), Box<dyn Error>> {
 
                         let union_ull = UltraLogLog::merge(&ref_map[ref_name].0, &query_map[qry_name].0)
                             .expect("failed to merge sketches");
-                        let union_count = union_ull.get_distinct_count_estimate();
+                        
+                        //let union_count = union_ull.get_distinct_count_estimate();
+                        let union_count: f64 = match estimator.as_str() {
+                            "fgra" => union_ull.get_distinct_count_estimate(),
+                            "ml"   => MaximumLikelihoodEstimator.estimate(&union_ull),
+                            _      => panic!("estimator needs to be either fgra or ml"),
+                        };
 
                         info!("Union: {}, a: {}, b: {}", union_count, a, b);
 
