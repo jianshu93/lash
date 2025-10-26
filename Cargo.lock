@@ -2009,9 +2009,9 @@ checksum = "1dccffe3ce07af9386bfd29e80c0ab1a8205a2fc34e4bcd40364df902cfa8f3f"
 
 [[package]]
 name = "ultraloglog"
-version = "0.1.4"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "102b473a7fe1ac59728deb11d1f5b8bc2792053a01a9b3e8a43cab08c9b9ed54"
+checksum = "bd9ab8202671c961fc52eed52f98348e7907c90aee26bcb66db282358f25afef"
 dependencies = [
  "bincode",
  "serde",

@@ -2,7 +2,10 @@
 
 # Fast and Memory Efficient Genome/Metagenome Sketching via HyperMinHash, HyperLogLog, and UltraLogLog
 
-Genome sketching can be extremely accurate but requires a huge amount of memory for MinHash-like algorithms. Recently, a new algorithm combining MinHash and HyperLogLog, called HyerMinHash was invented (1), which can perform MinHash in loglog space, a significant decrease in space/memory requirement. Together with [lukaslueg](https://github.com/lukaslueg), we first create a Rust library [hyperminhash](https://github.com/lukaslueg/hyperminhash) and then combine rolling hashing with HyperMinHash for extremely fast processing of genomic sequences. 
+This is a software for genome sketching and distance approximation in LogLog space. Thus, it is named LASH (**L**oglog h**ASH**)
+
+### Description ###
+Genome sketching can be extremely accurate but requires a huge amount of memory for MinHash-like algorithms. Recently, a new algorithm combining MinHash and HyperLogLog, called HyerMinHash was invented (1), which can perform MinHash in loglog space, a significant decrease in space/memory requirement. Together with [lukaslueg](https://github.com/lukaslueg), we first created a Rust library [hyperminhash](https://github.com/lukaslueg/hyperminhash) and then combined rolling hashing with HyperMinHash for extremely fast processing of genomic sequences. 
 
 We also included the HyperLogLog algorithm (2), implemented  from the library [streaming_algorithms](https://github.com/jianshu93/streaming_algorithms/tree/master). HyperLogLog is more space efficient than HyperMinHash, though not as space efficient as UltraLogLog (3). Both use hashing algorithms that transform elements into a binary number, where the number of leading 0s is kept track of to estimate cardinality. UltraLogLog can be up to 28% more space efficient than HyperLogLog due to a better sketch structure and estimator. It also has better compaction when using compressing algorithms (e.g., zstd). Ultraloglog was implemented with [waynexia](https://github.com/waynexia), see [ultraloglog](https://github.com/waynexia/ultraloglog). 
 
