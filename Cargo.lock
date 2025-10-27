@@ -956,7 +956,7 @@ dependencies = [
 
 [[package]]
 name = "lash-rs"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "byteorder",
  "clap",
@@ -2009,9 +2009,9 @@ checksum = "1dccffe3ce07af9386bfd29e80c0ab1a8205a2fc34e4bcd40364df902cfa8f3f"
 
 [[package]]
 name = "ultraloglog"
-version = "0.1.5"
+version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7a0ea5e9964a1c70c75cc1cf2421d62c38029c788766012754216384b6cedce"
+checksum = "bd9ab8202671c961fc52eed52f98348e7907c90aee26bcb66db282358f25afef"
 dependencies = [
  "bincode",
  "serde",

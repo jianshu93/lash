@@ -3,7 +3,6 @@ use clap::{Arg, ArgAction, Command};
 // use needletail::sequence::canonical;
 use hashbrown::HashMap;
 use rayon::prelude::*;
-use rayon::ThreadPoolBuilder;
 use std::error::Error;
 //use xxhash_rust::xxh3::Xxh3Builder;
 use std::fs;
