@@ -1,9 +1,7 @@
 // src/utils.rs
 
-use crossbeam_channel::bounded;
 use hashbrown::HashMap;
 use needletail::parse_fastx_file;
-use rayon::iter::ParallelBridge; // for .par_bridge()
 use rayon::prelude::*;
 use std::error::Error;
 
@@ -29,6 +27,7 @@ use serde_json::json;
 use serde_json::to_writer_pretty;
 use streaming_algorithms::HyperLogLog;
 
+// ===================== common helpers =====================
 
 pub fn filter_out_n(seq: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(seq.len());
@@ -49,6 +48,8 @@ pub fn mask_bits(v: u64, k: usize) -> u64 {
     }
 }
 
+// ===================== distances (unchanged API) =====================
+
 pub fn hmh_distance(
     reference_names: Vec<String>,
     ref_sketch_file: String,
@@ -56,7 +57,6 @@ pub fn hmh_distance(
     query_names: Vec<String>,
     query_sketch_file: String,
 ) -> Result<Vec<(String, String, f64)>, Box<dyn Error>> {
-    // read a vector of Sketch in the same order as names
     fn read_sketches(file_name: &str, names: &Vec<String>) -> std::io::Result<Vec<Sketch>> {
         let file = File::open(file_name).expect(&format!("Error opening {}", file_name));
         let reader = BufReader::new(file);
@@ -91,7 +91,7 @@ pub fn hmh_distance(
         index += 1;
     }
 
-    // generate Cartesian product of (reference, query)
+    // Cartesian product of (reference, query)
     let pairs: Vec<(&String, &Sketch, &String, &Sketch)> = reference_sketches
         .iter()
         .flat_map(|(r_name, r_sketch)| {
@@ -101,7 +101,6 @@ pub fn hmh_distance(
         })
         .collect();
 
-    // compute similarities and distances in parallel
     let results: Vec<(String, String, f64)> = pairs
         .par_iter()
         .map(
@@ -139,7 +138,6 @@ pub fn hll_distance(
     let ref_sketch_file = File::open(ref_sketch_file).expect("Failed to open file");
     let query_sketch_file = File::open(query_sketch_file).expect("Failed to open file");
 
-    // build map name -> (hll, cardinality)
     fn create_ull_map(
         sketch_file: File,
         names: &Vec<String>,
@@ -167,12 +165,11 @@ pub fn hll_distance(
         .flat_map(|k1| query_map.keys().map(move |k2| (k1.as_str(), k2.as_str())))
         .collect();
 
-    // parallel compute
     let results = pairs
         .par_iter()
         .map(|&(reference_name, query_name)| {
-            let a: f64 = ref_map[reference_name].1;
-            let b: f64 = query_map[query_name].1;
+            let a: f64 = ref_map[reference_name].1; // reference cardinality
+            let b: f64 = query_map[query_name].1;   // query cardinality
             let mut ref_hll = ref_map[reference_name].0.clone();
             let q_hll = &query_map[query_name].0;
             ref_hll.union(q_hll);
@@ -181,11 +178,7 @@ pub fn hll_distance(
             info!("Union: {}, a: {}, b: {}", union_count, a, b);
 
             let similarity = (a + b - union_count) / union_count;
-            let s = if similarity <= 0.0 {
-                std::f64::EPSILON
-            } else {
-                similarity
-            };
+            let s = if similarity <= 0.0 { std::f64::EPSILON } else { similarity };
             let numerator: f64 = 2.0 * s;
             let denominator: f64 = 1.0 + s;
             let fraction: f64 = numerator / denominator;
@@ -197,6 +190,10 @@ pub fn hll_distance(
     Ok(results)
 }
 
+// ===================== sketchers: PARALLEL BY FILE =====================
+//
+// Each file is processed to completion in its own task (no inner parallelism / no channels).
+// This is simple, avoids stack overflows, and matches the “parallel by sample” request.
 
 pub fn hmh_sketch(
     list_path: String,
@@ -214,104 +211,55 @@ pub fn hmh_sketch(
             .collect()
     };
 
-    // per-file parallelism; inside each file, batches are processed in parallel via par_bridge()
+    // build a Sketch per file in parallel
     let sketches: HashMap<String, Sketch> = files
         .par_iter()
-        .map(|fname| {
-            // capacity sized to threads to prevent back-pressure
-            let cap = (rayon::current_num_threads() * 2).max(8);
-            let (tx, rx) = bounded::<Vec<Vec<u8>>>(cap);
+        .map(|file_name| {
+            let mut reader = parse_fastx_file(file_name).expect("Failed to parse file");
+            let mut global = Sketch::default();
 
-            // Producer: stream FASTA/FASTQ into BASE-sized batches
-            std::thread::spawn({
-                let fname = fname.clone();
-                move || {
-                    let mut reader = parse_fastx_file(&fname).expect("Failed to parse file");
-                    const TARGET_BASES: usize = 2_000_000; // tune: 2–32MB typical
-                    let mut batch: Vec<Vec<u8>> = Vec::with_capacity(4096);
-                    let mut bases: usize = 0;
+            while let Some(rec_res) = reader.next() {
+                if let Ok(rec) = rec_res {
+                    let seq = filter_out_n(rec.seq().as_ref());
+                    if seq.len() < kmer_length {
+                        continue;
+                    }
+                    let kseq = KSeq::new(&seq, 2);
 
-                    while let Some(rec_res) = reader.next() {
-                        if let Ok(rec) = rec_res {
-                            let v = filter_out_n(rec.seq().as_ref()); // <-- FIX
-                            if v.len() >= kmer_length {
-                                bases += v.len();
-                                batch.push(v);
-                                if bases >= TARGET_BASES {
-                                    if tx.send(batch).is_err() {
-                                        return;
-                                    }
-                                    batch = Vec::with_capacity(4096);
-                                    bases = 0;
-                                }
-                            }
+                    if kmer_length <= 14 {
+                        let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                            global.add_bytes(&(masked as u32).to_le_bytes());
                         }
+                    } else if kmer_length == 16 {
+                        let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                            global.add_bytes(&(masked as u32).to_le_bytes());
+                        }
+                    } else if kmer_length <= 32 {
+                        let mut it = KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(canon.get_compressed_value(), kmer_length);
+                            global.add_bytes(&masked.to_le_bytes());
+                        }
+                    } else {
+                        panic!("k-mer length must be 1–32, k=15 is not supported");
                     }
-                    if !batch.is_empty() {
-                        let _ = tx.send(batch);
-                    }
-                    // tx dropped here
                 }
-            });
+            }
 
-            // Consumers: turn channel into parallel stream, map each batch → local sketch, reduce
-            let file_sketch: Sketch = rx
-                .into_iter()
-                .par_bridge()
-                .map(|batch| {
-                    let mut local = Sketch::default();
-
-                    for seq in batch {
-                        let kseq = KSeq::new(&seq, 2);
-
-                        if kmer_length <= 14 {
-                            let mut it =
-                                KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
-                            while let Some(km) = it.next() {
-                                let canon = km.min(km.reverse_complement());
-                                let masked =
-                                    mask_bits(canon.get_compressed_value() as u64, kmer_length);
-                                local.add_bytes(&(masked as u32).to_le_bytes());
-                            }
-                        } else if kmer_length == 16 {
-                            let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
-                            while let Some(km) = it.next() {
-                                let canon = km.min(km.reverse_complement());
-                                let masked =
-                                    mask_bits(canon.get_compressed_value() as u64, kmer_length);
-                                local.add_bytes(&(masked as u32).to_le_bytes());
-                            }
-                        } else if kmer_length <= 32 {
-                            let mut it =
-                                KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
-                            while let Some(km) = it.next() {
-                                let canon = km.min(km.reverse_complement());
-                                let masked =
-                                    mask_bits(canon.get_compressed_value(), kmer_length);
-                                local.add_bytes(&masked.to_le_bytes());
-                            }
-                        } else {
-                            panic!("k-mer length must be 1–32, k=15 is not supported");
-                        }
-                    }
-
-                    local
-                })
-                .reduce(Sketch::default, |mut a, b| {
-                    a.union(&b);
-                    a
-                });
-
-            (fname.clone(), file_sketch)
+            (file_name.clone(), global)
         })
         .collect();
 
     // write names list
     let names: Vec<String> = sketches.keys().cloned().collect();
-    to_writer_pretty(
-        &File::create(format!("{}_files.json", output_name))?,
-        &names,
-    )?;
+    to_writer_pretty(&File::create(format!("{}_files.json", output_name))?, &names)?;
 
     // serialize sketches (compressed)
     let out_bin = format!("{}_sketches.bin", output_name);
@@ -326,10 +274,7 @@ pub fn hmh_sketch(
     encoder.finish().expect("failed to compress");
 
     // parameter JSON
-    let params = json!({
-        "k": kmer_length.to_string(),
-        "algorithm": "hmh"
-    });
+    let params = json!({ "k": kmer_length.to_string(), "algorithm": "hmh" });
     File::create(format!("{}_parameters.json", output_name))?
         .write_all(serde_json::to_string_pretty(&params)?.as_bytes())?;
 
@@ -344,6 +289,7 @@ pub fn hll_sketch(
     output_name: String,
     threads: u32,
 ) -> Result<(), Box<dyn Error>> {
+    // files list
     let files: Vec<String> = {
         let f = File::open(list_path)?;
         BufReader::new(f)
@@ -353,90 +299,49 @@ pub fn hll_sketch(
             .collect()
     };
 
+    // build an HLL per file in parallel
     let hll_vec: Vec<HyperLogLog<i64>> = files
         .par_iter()
-        .map(|fname| {
-            let cap = (rayon::current_num_threads() * 2).max(8);
-            let (tx, rx) = bounded::<Vec<Vec<u8>>>(cap);
+        .map(|file_name| {
+            let mut reader = parse_fastx_file(file_name).expect("Invalid input file");
+            let mut hll = HyperLogLog::<i64>::with_p(precision as u8);
 
-            std::thread::spawn({
-                let fname = fname.clone();
-                move || {
-                    let mut reader = parse_fastx_file(&fname).expect("Invalid input file");
-                    const TARGET_BASES: usize = 2_000_000;
-                    let mut batch: Vec<Vec<u8>> = Vec::with_capacity(4096);
-                    let mut bases = 0usize;
-
-                    while let Some(res) = reader.next() {
-                        if let Ok(seqrec) = res {
-                            let v = filter_out_n(seqrec.seq().as_ref()); // <-- FIX
-                            if v.len() >= kmer_length {
-                                bases += v.len();
-                                batch.push(v);
-                                if bases >= TARGET_BASES {
-                                    if tx.send(batch).is_err() {
-                                        return;
-                                    }
-                                    batch = Vec::with_capacity(4096);
-                                    bases = 0;
-                                }
-                            }
-                        }
+            while let Some(res) = reader.next() {
+                if let Ok(seqrec) = res {
+                    let seq = filter_out_n(seqrec.seq().as_ref());
+                    if seq.len() < kmer_length {
+                        continue;
                     }
-                    if !batch.is_empty() {
-                        let _ = tx.send(batch);
+                    let kseq = KSeq::new(&seq, 2);
+
+                    if kmer_length <= 14 {
+                        let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                            hll.push_hash64(xxh3_64(&masked.to_le_bytes()));
+                        }
+                    } else if kmer_length == 16 {
+                        let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                            hll.push_hash64(xxh3_64(&masked.to_le_bytes()));
+                        }
+                    } else if kmer_length <= 32 {
+                        let mut it = KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(canon.get_compressed_value(), kmer_length);
+                            hll.push_hash64(xxh3_64(&masked.to_le_bytes()));
+                        }
+                    } else {
+                        panic!("k-mer length must be 1–32, k=15 is not supported");
                     }
                 }
-            });
+            }
 
-            rx.into_iter()
-                .par_bridge()
-                .map(|batch| {
-                    let mut local = HyperLogLog::<i64>::with_p(precision as u8);
-
-                    for seq in batch {
-                        let kseq = KSeq::new(&seq, 2);
-
-                        if kmer_length <= 14 {
-                            let mut it =
-                                KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
-                            while let Some(km) = it.next() {
-                                let canon = km.min(km.reverse_complement());
-                                let masked =
-                                    mask_bits(canon.get_compressed_value() as u64, kmer_length);
-                                local.push_hash64(xxh3_64(&masked.to_le_bytes()));
-                            }
-                        } else if kmer_length == 16 {
-                            let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
-                            while let Some(km) = it.next() {
-                                let canon = km.min(km.reverse_complement());
-                                let masked =
-                                    mask_bits(canon.get_compressed_value() as u64, kmer_length);
-                                local.push_hash64(xxh3_64(&masked.to_le_bytes()));
-                            }
-                        } else if kmer_length <= 32 {
-                            let mut it =
-                                KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
-                            while let Some(km) = it.next() {
-                                let canon = km.min(km.reverse_complement());
-                                let masked =
-                                    mask_bits(canon.get_compressed_value(), kmer_length);
-                                local.push_hash64(xxh3_64(&masked.to_le_bytes()));
-                            }
-                        } else {
-                            panic!("k-mer length must be 1–32, k=15 is not supported");
-                        }
-                    }
-
-                    local
-                })
-                .reduce(
-                    || HyperLogLog::<i64>::with_p(precision as u8),
-                    |mut a, b| {
-                        a.union(&b);
-                        a
-                    },
-                )
+            hll
         })
         .collect();
 
@@ -450,25 +355,19 @@ pub fn hll_sketch(
         .multithread(threads)
         .expect("failed to multithread compressor");
     for hll in &hll_vec {
-        // HyperLogLog<i64> implements Clone; save by value or clone
-        hll.clone()
-            .save(&mut encoder)
-            .expect("Failed to save HLL");
+        hll.clone().save(&mut encoder).expect("Failed to save HLL");
     }
     encoder.finish().expect("failed to compress");
 
     // names & params
-    to_writer_pretty(
-        &File::create(format!("{}_files.json", &output_name))?,
-        &files,
-    )?;
+    to_writer_pretty(&File::create(format!("{}_files.json", &output_name))?, &files)?;
 
     let data = json!({
         "k": kmer_length.to_string(),
         "algorithm": "hll",
         "precision": precision.to_string(),
     });
-    File::create(format!("{}_parameters.json", output_name))?
+    File::create(format!("{}_parameters.json", &output_name))?
         .write_all(serde_json::to_string_pretty(&data)?.as_bytes())?;
 
     println!("Serialized sketches with hll");
@@ -482,6 +381,7 @@ pub fn ull_sketch(
     output_name: String,
     threads: u32,
 ) -> Result<(), Box<dyn Error>> {
+    // files list
     let files: Vec<String> = {
         let f = File::open(list_path)?;
         BufReader::new(f)
@@ -491,87 +391,49 @@ pub fn ull_sketch(
             .collect()
     };
 
+    // build a ULL per file in parallel
     let ull_vec: Vec<UltraLogLog> = files
         .par_iter()
-        .map(|fname| {
-            let cap = (rayon::current_num_threads() * 2).max(8);
-            let (tx, rx) = bounded::<Vec<Vec<u8>>>(cap);
+        .map(|file_name| {
+            let mut reader = parse_fastx_file(file_name).expect("Invalid input file");
+            let mut ull = UltraLogLog::new(precision).expect("failed to create ULL");
 
-            std::thread::spawn({
-                let fname = fname.clone();
-                move || {
-                    let mut reader = parse_fastx_file(&fname).expect("Invalid input file");
-                    const TARGET_BASES: usize = 2_000_000;
-                    let mut batch: Vec<Vec<u8>> = Vec::with_capacity(4096);
-                    let mut bases = 0usize;
-
-                    while let Some(result) = reader.next() {
-                        if let Ok(seqrec) = result {
-                            let v = filter_out_n(seqrec.seq().as_ref()); // <-- FIX
-                            if v.len() >= kmer_length {
-                                bases += v.len();
-                                batch.push(v);
-                                if bases >= TARGET_BASES {
-                                    if tx.send(batch).is_err() {
-                                        return;
-                                    }
-                                    batch = Vec::with_capacity(4096);
-                                    bases = 0;
-                                }
-                            }
-                        }
+            while let Some(result) = reader.next() {
+                if let Ok(seqrec) = result {
+                    let seq = filter_out_n(seqrec.seq().as_ref());
+                    if seq.len() < kmer_length {
+                        continue;
                     }
-                    if !batch.is_empty() {
-                        let _ = tx.send(batch);
+                    let kseq = KSeq::new(&seq, 2);
+
+                    if kmer_length <= 14 {
+                        let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                            ull.add(xxh3_64(&masked.to_le_bytes()));
+                        }
+                    } else if kmer_length == 16 {
+                        let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                            ull.add(xxh3_64(&masked.to_le_bytes()));
+                        }
+                    } else if kmer_length <= 32 {
+                        let mut it = KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(canon.get_compressed_value(), kmer_length);
+                            ull.add(xxh3_64(&masked.to_le_bytes()));
+                        }
+                    } else {
+                        panic!("k-mer length must be 1–32, k=15 is not supported");
                     }
                 }
-            });
+            }
 
-            rx.into_iter()
-                .par_bridge()
-                .map(|batch| {
-                    let mut local = UltraLogLog::new(precision).expect("create ull");
-
-                    for seq in batch {
-                        let kseq = KSeq::new(&seq, 2);
-
-                        if kmer_length <= 14 {
-                            let mut it =
-                                KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
-                            while let Some(km) = it.next() {
-                                let canon = km.min(km.reverse_complement());
-                                let masked =
-                                    mask_bits(canon.get_compressed_value() as u64, kmer_length);
-                                local.add(xxh3_64(&masked.to_le_bytes()));
-                            }
-                        } else if kmer_length == 16 {
-                            let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
-                            while let Some(km) = it.next() {
-                                let canon = km.min(km.reverse_complement());
-                                let masked =
-                                    mask_bits(canon.get_compressed_value() as u64, kmer_length);
-                                local.add(xxh3_64(&masked.to_le_bytes()));
-                            }
-                        } else if kmer_length <= 32 {
-                            let mut it =
-                                KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
-                            while let Some(km) = it.next() {
-                                let canon = km.min(km.reverse_complement());
-                                let masked =
-                                    mask_bits(canon.get_compressed_value(), kmer_length);
-                                local.add(xxh3_64(&masked.to_le_bytes()));
-                            }
-                        } else {
-                            panic!("k-mer length must be 1–32, k=15 is not supported");
-                        }
-                    }
-
-                    local
-                })
-                .reduce(
-                    || UltraLogLog::new(precision).expect("create ull"),
-                    |a, b| UltraLogLog::merge(&a, &b).expect("merge"),
-                )
+            ull
         })
         .collect();
 
@@ -590,17 +452,14 @@ pub fn ull_sketch(
     encoder.finish().expect("failed to compress");
 
     // names & params
-    to_writer_pretty(
-        &File::create(format!("{}_files.json", &output_name))?,
-        &files,
-    )?;
+    to_writer_pretty(&File::create(format!("{}_files.json", &output_name))?, &files)?;
 
     let data = json!({
         "k": kmer_length.to_string(),
         "algorithm": "ull",
         "precision": precision.to_string(),
     });
-    File::create(format!("{}_parameters.json", output_name))?
+    File::create(format!("{}_parameters.json", &output_name))?
         .write_all(serde_json::to_string_pretty(&data)?.as_bytes())?;
 
     println!("Serialized sketches with ull");
