@@ -1,0 +1,50 @@
+   0.114359625s  INFO prepare_target{force=false package_id=lash-rs v0.1.4 (/Users/claire/Documents/Rust/lash) target="lash"}: cargo::core::compiler::fingerprint: fingerprint error for lash-rs v0.1.4 (/Users/claire/Documents/Rust/lash)/Check { test: false }/TargetInner { name: "lash", doc: true, ..: with_path("/Users/claire/Documents/Rust/lash/src/main.rs", Edition2021) }
+   0.114531500s  INFO prepare_target{force=false package_id=lash-rs v0.1.4 (/Users/claire/Documents/Rust/lash) target="lash"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/claire/Documents/Rust/lash/target/debug/.fingerprint/lash-rs-84f5dc16f86f163e/bin-lash`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   7: cargo::ops::cargo_compile::compile_ws
+   8: cargo::ops::cargo_compile::compile_with_exec
+   9: cargo::ops::cargo_compile::compile
+  10: cargo::commands::check::exec
+  11: <cargo::cli::Exec>::exec
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14: std::rt::lang_start::<()>::{closure#0}
+  15: std::rt::lang_start_internal
+  16: _main
+   0.158553500s  INFO prepare_target{force=false package_id=lash-rs v0.1.4 (/Users/claire/Documents/Rust/lash) target="lash"}: cargo::core::compiler::fingerprint: fingerprint error for lash-rs v0.1.4 (/Users/claire/Documents/Rust/lash)/Check { test: true }/TargetInner { name: "lash", doc: true, ..: with_path("/Users/claire/Documents/Rust/lash/src/main.rs", Edition2021) }
+   0.158563125s  INFO prepare_target{force=false package_id=lash-rs v0.1.4 (/Users/claire/Documents/Rust/lash) target="lash"}: cargo::core::compiler::fingerprint:     err: failed to read `/Users/claire/Documents/Rust/lash/target/debug/.fingerprint/lash-rs-1b2f5e59e8d22264/test-bin-lash`
+
+Caused by:
+    No such file or directory (os error 2)
+
+Stack backtrace:
+   0: std::backtrace::Backtrace::create
+   1: cargo_util::paths::read_bytes
+   2: cargo_util::paths::read
+   3: cargo::core::compiler::fingerprint::_compare_old_fingerprint
+   4: cargo::core::compiler::fingerprint::prepare_target
+   5: cargo::core::compiler::compile
+   6: <cargo::core::compiler::build_runner::BuildRunner>::compile
+   7: cargo::ops::cargo_compile::compile_ws
+   8: cargo::ops::cargo_compile::compile_with_exec
+   9: cargo::ops::cargo_compile::compile
+  10: cargo::commands::check::exec
+  11: <cargo::cli::Exec>::exec
+  12: cargo::main
+  13: std::sys::backtrace::__rust_begin_short_backtrace::<fn(), ()>
+  14: std::rt::lang_start::<()>::{closure#0}
+  15: std::rt::lang_start_internal
+  16: _main
+    Checking lash-rs v0.1.4 (/Users/claire/Documents/Rust/lash)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.80s
