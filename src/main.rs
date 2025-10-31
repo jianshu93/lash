@@ -3,7 +3,6 @@ use clap::{Arg, ArgAction, Command};
 // use needletail::sequence::canonical;
 use hashbrown::HashMap;
 use rayon::prelude::*;
-use rayon::ThreadPoolBuilder;
 use std::error::Error;
 //use xxhash_rust::xxh3::Xxh3Builder;
 use std::fs;
@@ -60,10 +59,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Arg::new("threads")
                 .short('t')
                 .long("threads")
-                .help("Number of threads to use")
+                .help("Number of threads to use, default to all logical cores")
                 .required(false)
                 .value_parser(clap::value_parser!(usize))
-                .default_value("1")
                 .action(ArgAction::Set)
             )
             .arg(
@@ -118,10 +116,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Arg::new("threads")
                 .short('t')
                 .long("threads")
-                .help("Number of threads to use")
+                .help("Number of threads to use, default to all logical cores")
                 .required(false)
                 .value_parser(clap::value_parser!(usize))
-                .default_value("1")
                 .action(ArgAction::Set)
             )
             .arg(
@@ -141,17 +138,18 @@ fn main() -> Result<(), Box<dyn Error>> {
             // organize the inputs
             let sketch_file_name = s_matches.get_one::<String>("file").expect("required");
             let kmer_length: usize = *s_matches.get_one::<usize>("kmer_length").expect("required");
-            let threads: usize = *s_matches
+            let threads = s_matches
                 .get_one::<usize>("threads")
-                .unwrap_or(&num_cpus::get());
+                .copied()
+                .unwrap_or_else(|| num_cpus::get());
+
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(threads.max(1))
+                .build_global()
+                .unwrap();
 
             let output_name = s_matches.get_one::<String>("output").expect("required");
             let alg = s_matches.get_one::<String>("algorithm").expect("required");
-
-            ThreadPoolBuilder::new()
-                .num_threads(threads)
-                .build_global()
-                .unwrap();
 
             let result: Result<(), Box<dyn Error>>;
             if alg == "hmh" {
@@ -248,9 +246,15 @@ fn main() -> Result<(), Box<dyn Error>> {
             let output_file: &String = s_matches
                 .get_one::<String>("output_file")
                 .expect("required");
-            let threads: usize = *s_matches
+            let threads = s_matches
                 .get_one::<usize>("threads")
-                .unwrap_or(&num_cpus::get());
+                .copied()
+                .unwrap_or_else(|| num_cpus::get());
+
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(threads.max(1))
+                .build_global()
+                .unwrap();
 
             // go through the files needed, find name file, sketch file, and param file
             let ref_files = find_files(ref_prefix).unwrap();
@@ -278,16 +282,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             if ref_map["algorithm"] == "ull" || ref_map["algorithm"] == "hll" {
                 if ref_map["precision"] != query_map["precision"] {
-                    panic!("{} was not sketched with same precision btwn genomes", ref_map["algorithm"]);
+                    panic!(
+                        "{} was not sketched with same precision btwn genomes",
+                        ref_map["algorithm"]
+                    );
                 }
             }
             // assign kmer length once k matches
             let kmer_length: usize = ref_map["k"].parse().expect("Not a valid usize");
-
-            ThreadPoolBuilder::new()
-                .num_threads(threads)
-                .build_global()
-                .unwrap();
 
             // function to read in names of the genomes, outputs a vector of names
             fn read_names(file_name: &str) -> std::io::Result<Vec<String>> {
@@ -318,11 +320,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                     kmer_length,
                     query_names,
                     query_sketch_file_name,
-                ).unwrap()
+                )
+                .unwrap()
             } else if ref_map["algorithm"] == "ull" {
                 // ULL: build maps, pairs, and compute
-                let ref_sketch_file = File::open(ref_sketch_file_name).expect("Failed to open file");
-                let query_sketch_file = File::open(query_sketch_file_name).expect("Failed to open file");
+                let ref_sketch_file =
+                    File::open(ref_sketch_file_name).expect("Failed to open file");
+                let query_sketch_file =
+                    File::open(query_sketch_file_name).expect("Failed to open file");
                 let estimator = s_matches
                     .get_one::<String>("estimator")
                     .cloned()
@@ -332,7 +337,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     sketch_file: File,
                     names: &Vec<String>,
                     estimator: &String,
-                ) -> Result<HashMap<String, (UltraLogLog, f64), Xxh3Builder>, std::io::Error> {
+                ) -> Result<HashMap<String, (UltraLogLog, f64), Xxh3Builder>, std::io::Error>
+                {
                     let hasher = Xxh3Builder { seed: 93 };
                     let mut sketches = HashMap::with_hasher(hasher);
                     let reader = BufReader::new(sketch_file);
@@ -341,42 +347,50 @@ fn main() -> Result<(), Box<dyn Error>> {
                         let ull = UltraLogLog::load(&mut decoder)?;
                         let c: f64 = match estimator.as_str() {
                             "fgra" => ull.get_distinct_count_estimate(),
-                            "ml"   => MaximumLikelihoodEstimator.estimate(&ull),
-                            _      => panic!("estimator needs to be either fgra or ml"),
+                            "ml" => MaximumLikelihoodEstimator.estimate(&ull),
+                            _ => panic!("estimator needs to be either fgra or ml"),
                         };
                         sketches.insert(file.clone(), (ull, c));
                     }
                     Ok(sketches)
                 }
 
-                let ref_map = create_ull_map(ref_sketch_file, &reference_names, &estimator).unwrap();
-                let query_map = create_ull_map(query_sketch_file, &query_names, &estimator).unwrap();
+                let ref_map =
+                    create_ull_map(ref_sketch_file, &reference_names, &estimator).unwrap();
+                let query_map =
+                    create_ull_map(query_sketch_file, &query_names, &estimator).unwrap();
 
                 let pairs: Vec<(&str, &str)> = ref_map
                     .keys()
                     .flat_map(|k1| query_map.keys().map(move |k2| (k1.as_str(), k2.as_str())))
                     .collect();
 
-                pairs.par_iter()
+                pairs
+                    .par_iter()
                     .map(|&(ref_name, qry_name)| {
                         let a: f64 = ref_map[ref_name].1;
                         let b: f64 = query_map[qry_name].1;
 
-                        let union_ull = UltraLogLog::merge(&ref_map[ref_name].0, &query_map[qry_name].0)
-                            .expect("failed to merge sketches");
-                        
+                        let union_ull =
+                            UltraLogLog::merge(&ref_map[ref_name].0, &query_map[qry_name].0)
+                                .expect("failed to merge sketches");
+
                         //let union_count = union_ull.get_distinct_count_estimate();
                         let union_count: f64 = match estimator.as_str() {
                             "fgra" => union_ull.get_distinct_count_estimate(),
-                            "ml"   => MaximumLikelihoodEstimator.estimate(&union_ull),
-                            _      => panic!("estimator needs to be either fgra or ml"),
+                            "ml" => MaximumLikelihoodEstimator.estimate(&union_ull),
+                            _ => panic!("estimator needs to be either fgra or ml"),
                         };
 
                         info!("Union: {}, a: {}, b: {}", union_count, a, b);
 
                         let similarity = (a + b - union_count) / union_count;
-                        let s = if similarity <= 0.0 { std::f64::EPSILON } else { similarity };
-                        let distance = -( (2.0*s) / (1.0 + s) ).ln() / (kmer_length as f64);
+                        let s = if similarity <= 0.0 {
+                            std::f64::EPSILON
+                        } else {
+                            similarity
+                        };
+                        let distance = -((2.0 * s) / (1.0 + s)).ln() / (kmer_length as f64);
 
                         (ref_name.to_string(), qry_name.to_string(), distance)
                     })
@@ -389,7 +403,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                     kmer_length,
                     query_names,
                     query_sketch_file_name,
-                ).unwrap()
+                )
+                .unwrap()
             };
 
             // --- write output ---
@@ -408,7 +423,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .and_then(|os_str| os_str.to_str())
                     .unwrap_or(reference_name.as_str());
 
-                let d = if query_basename == reference_basename { 0.0 } else { *distance };
+                let d = if query_basename == reference_basename {
+                    0.0
+                } else {
+                    *distance
+                };
 
                 writeln!(output, "{}\t{}\t{:.6}", query_name, reference_name, d)?;
             }
