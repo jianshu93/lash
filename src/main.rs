@@ -385,12 +385,13 @@ fn main() -> Result<(), Box<dyn Error>> {
                         info!("Union: {}, a: {}, b: {}", union_count, a, b);
 
                         let similarity = (a + b - union_count) / union_count;
-                        let s = if similarity <= 0.0 {
-                            std::f64::EPSILON
+                        let s = if similarity < 0.0 { 
+                            0.0
                         } else {
                             similarity
                         };
-                        let distance = -((2.0 * s) / (1.0 + s)).ln() / (kmer_length as f64);
+                        let frac = 2.0 * s / (1.0 + s); 
+                        let distance = 1.0f64 - frac.powf(1.0 / kmer_length as f64);
 
                         (ref_name.to_string(), qry_name.to_string(), distance)
                     })

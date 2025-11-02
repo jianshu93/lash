@@ -105,7 +105,7 @@ pub fn hmh_distance(
         .par_iter()
         .map(
             |&(reference_name, reference_sketch, query_name, query_sketch)| {
-                let similarity = query_sketch.similarity(reference_sketch).max(std::f64::EPSILON);
+                let similarity = query_sketch.similarity(reference_sketch).max(0.0);
 
                 // for debugging
                 info!(
@@ -115,11 +115,10 @@ pub fn hmh_distance(
                     query_sketch.cardinality()
                 );
 
-                // distance = -ln( 2s/(1+s) ) / k
                 let numerator = 2.0 * similarity;
                 let denominator = 1.0 + similarity;
                 let fraction: f64 = numerator / denominator;
-                let distance = -fraction.ln() / (kmer_length as f64);
+                let distance = 1.0f64 - fraction.powf(1.0 / kmer_length as f64);
 
                 (reference_name.clone(), query_name.clone(), distance)
             },
@@ -177,12 +176,13 @@ pub fn hll_distance(
 
             info!("Union: {}, a: {}, b: {}", union_count, a, b);
 
-            let similarity = (a + b - union_count) / union_count;
-            let s = if similarity <= 0.0 { std::f64::EPSILON } else { similarity };
-            let numerator: f64 = 2.0 * s;
-            let denominator: f64 = 1.0 + s;
-            let fraction: f64 = numerator / denominator;
-            let distance: f64 = -fraction.ln() / (kmer_length as f64);
+            let s = ((a + b - union_count) / union_count).max(0.0);
+            // let numerator: f64 = 2.0 * s;
+            // let denominator: f64 = 1.0 + s;
+            // let fraction: f64 = numerator / denominator;
+            // let distance: f64 = -fraction.ln() / (kmer_length as f64);
+            let frac = 2.0 * s / (1.0 + s); 
+            let distance = 1.0f64 - frac.powf(1.0 / kmer_length as f64);
             (reference_name.to_string(), query_name.to_string(), distance)
         })
         .collect();
