@@ -83,6 +83,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .default_value("10")
                 .action(ArgAction::Set)
             )
+            .arg(
+                Arg::new("seed")
+                .short('s')
+                .long("seed")
+                .help("Random seed")
+                .required(false)
+                .value_parser(clap::value_parser!(u64))
+                .default_value("42")
+                .action(ArgAction::Set)
+            )
         )
         .subcommand(
             Command::new("dist")
@@ -171,12 +181,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
             } else if alg == "ull" {
                 let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
+                let seed: u64 = *s_matches.get_one::<u64>("seed").expect("required");
                 result = ull_sketch(
                     precision,
                     sketch_file_name.clone(),
                     kmer_length,
                     output_name.clone(),
                     threads as u32,
+                    seed
                 );
             } else {
                 // input for alg is not hmh, ull, or hll
