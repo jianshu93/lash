@@ -12,7 +12,7 @@ use std::io::{BufRead, BufReader, BufWriter, Write};
 
 use ultraloglog::UltraLogLog;
 use xxhash_rust::xxh3::xxh3_64_with_seed;
-use xxhash_rust::xxh3::xxh3_64;
+// use xxhash_rust::xxh3::xxh3_64;
 
 use zstd::stream::{Decoder, Encoder};
 
@@ -290,6 +290,7 @@ pub fn hll_sketch(
     kmer_length: usize,
     output_name: String,
     threads: u32,
+    seed: u64
 ) -> Result<(), Box<dyn Error>> {
     // files list
     let files: Vec<String> = {
@@ -321,21 +322,21 @@ pub fn hll_sketch(
                         while let Some(km) = it.next() {
                             let canon = km.min(km.reverse_complement());
                             let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
-                            hll.push_hash64(xxh3_64(&masked.to_le_bytes()));
+                            hll.push_hash64(xxh3_64_with_seed(&masked.to_le_bytes(), seed));
                         }
                     } else if kmer_length == 16 {
                         let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
                         while let Some(km) = it.next() {
                             let canon = km.min(km.reverse_complement());
                             let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
-                            hll.push_hash64(xxh3_64(&masked.to_le_bytes()));
+                            hll.push_hash64(xxh3_64_with_seed(&masked.to_le_bytes(), seed));
                         }
                     } else if kmer_length <= 32 {
                         let mut it = KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
                         while let Some(km) = it.next() {
                             let canon = km.min(km.reverse_complement());
                             let masked = mask_bits(canon.get_compressed_value(), kmer_length);
-                            hll.push_hash64(xxh3_64(&masked.to_le_bytes()));
+                            hll.push_hash64(xxh3_64_with_seed(&masked.to_le_bytes(), seed));
                         }
                     } else {
                         panic!("k-mer length must be 1–32, k=15 is not supported");
