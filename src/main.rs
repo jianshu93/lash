@@ -7,12 +7,13 @@ use std::error::Error;
 //use xxhash_rust::xxh3::Xxh3Builder;
 use std::fs;
 use std::fs::File;
-use std::io::{BufReader, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use zstd::stream::Decoder;
 mod hasher;
 use hasher::Xxh3Builder;
 use log::info;
+use serde_json::json;
 mod utils;
 use crate::utils::{hll_distance, hll_sketch, hmh_distance, hmh_sketch, ull_sketch};
 use ultraloglog::{Estimator, MaximumLikelihoodEstimator, UltraLogLog};
@@ -87,7 +88,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Arg::new("seed")
                 .short('s')
                 .long("seed")
-                .help("Random seed, for ull and hll only.")
+                .help("Random seed")
                 .required(false)
                 .value_parser(clap::value_parser!(u64))
                 .default_value("42")
@@ -160,22 +161,32 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             let output_name = s_matches.get_one::<String>("output").expect("required");
             let alg = s_matches.get_one::<String>("algorithm").expect("required");
+            let seed: u64 = *s_matches.get_one::<u64>("seed").expect("required");
 
+            let files: Vec<String> = {
+                let f = File::open(&sketch_file_name)?;
+                BufReader::new(f)
+                    .lines()
+                    .filter_map(|l| l.ok())
+                    .filter(|l| !l.trim().is_empty())
+                    .collect()
+            };
+            
             let result: Result<(), Box<dyn Error>>;
             if alg == "hmh" {
                 // create hypermash object and sketch
                 result = hmh_sketch(
-                    sketch_file_name.clone(),
+                    files,
                     kmer_length,
                     output_name.clone(),
                     threads as u32,
+                    seed
                 );
             } else if alg == "hll" {
                 let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
-                let seed: u64 = *s_matches.get_one::<u64>("seed").expect("required");
                 result = hll_sketch(
                     precision,
-                    sketch_file_name.clone(),
+                    files,
                     kmer_length,
                     output_name.clone(),
                     threads as u32,
@@ -183,10 +194,9 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
             } else if alg == "ull" {
                 let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
-                let seed: u64 = *s_matches.get_one::<u64>("seed").expect("required");
                 result = ull_sketch(
                     precision,
-                    sketch_file_name.clone(),
+                    files,
                     kmer_length,
                     output_name.clone(),
                     threads as u32,
@@ -196,6 +206,32 @@ fn main() -> Result<(), Box<dyn Error>> {
                 // input for alg is not hmh, ull, or hll
                 panic!("Algorithm must be either hmh, ull, or hll");
             }
+
+            // parameter JSONs
+            let params;
+            if alg == "ull" || alg == "hll" {
+                let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
+                params = json!({
+                    "k": kmer_length.to_string(),
+                    "algorithm": &alg,
+                    "precision": precision.to_string(),
+                    "seed": seed.to_string()
+                });
+            }
+            else {
+                params = json!({ 
+                    "k": kmer_length.to_string(), 
+                    "algorithm": &alg, 
+                    "seed": seed.to_string()
+                });
+                
+            }
+
+            // writing out
+            File::create(format!("{}_parameters.json", &output_name))?
+                    .write_all(serde_json::to_string_pretty(&params)?.as_bytes())?;
+
+            
             result
         }
         Some(("dist", s_matches)) => {

@@ -8,7 +8,7 @@ use std::error::Error;
 use crate::hasher::Xxh3Builder;
 
 use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufReader, BufWriter, Write};
 
 use ultraloglog::UltraLogLog;
 use xxhash_rust::xxh3::xxh3_64_with_seed;
@@ -25,7 +25,6 @@ use kmerutils::base::{
 };
 
 use log::info;
-use serde_json::json;
 use serde_json::to_writer_pretty;
 use streaming_algorithms::HyperLogLog;
 
@@ -59,6 +58,7 @@ pub fn hmh_distance(
     query_names: Vec<String>,
     query_sketch_file: String,
 ) -> Result<Vec<(String, String, f64)>, Box<dyn Error>> {
+
     fn read_sketches(file_name: &str, names: &Vec<String>) -> std::io::Result<Vec<Sketch>> {
         let file = File::open(file_name).expect(&format!("Error opening {}", file_name));
         let reader = BufReader::new(file);
@@ -198,20 +198,12 @@ pub fn hll_distance(
 // This is simple, avoids stack overflows, and matches the “parallel by sample” request.
 
 pub fn hmh_sketch(
-    list_path: String,
+    files: Vec<String>,
     kmer_length: usize,
     output_name: String,
     threads: u32,
+    seed: u64
 ) -> Result<(), Box<dyn Error>> {
-    // read list of genome paths
-    let files: Vec<String> = {
-        let f = File::open(&list_path)?;
-        BufReader::new(f)
-            .lines()
-            .filter_map(|l| l.ok())
-            .filter(|l| !l.trim().is_empty())
-            .collect()
-    };
 
     // build a Sketch per file in parallel
     let sketches: HashMap<String, Sketch> = files
@@ -233,21 +225,21 @@ pub fn hmh_sketch(
                         while let Some(km) = it.next() {
                             let canon = km.min(km.reverse_complement());
                             let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
-                            global.add_bytes(&(masked as u32).to_le_bytes());
+                            global.add_bytes_with_seed(&(masked as u32).to_le_bytes(), seed);
                         }
                     } else if kmer_length == 16 {
                         let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
                         while let Some(km) = it.next() {
                             let canon = km.min(km.reverse_complement());
                             let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
-                            global.add_bytes(&(masked as u32).to_le_bytes());
+                            global.add_bytes_with_seed(&(masked as u32).to_le_bytes(), seed);
                         }
                     } else if kmer_length <= 32 {
                         let mut it = KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
                         while let Some(km) = it.next() {
                             let canon = km.min(km.reverse_complement());
                             let masked = mask_bits(canon.get_compressed_value(), kmer_length);
-                            global.add_bytes(&masked.to_le_bytes());
+                            global.add_bytes_with_seed(&masked.to_le_bytes(), seed);
                         }
                     } else {
                         panic!("k-mer length must be 1–32, k=15 is not supported");
@@ -275,32 +267,18 @@ pub fn hmh_sketch(
     }
     encoder.finish().expect("failed to compress");
 
-    // parameter JSON
-    let params = json!({ "k": kmer_length.to_string(), "algorithm": "hmh" });
-    File::create(format!("{}_parameters.json", output_name))?
-        .write_all(serde_json::to_string_pretty(&params)?.as_bytes())?;
-
     println!("Serialized sketches with hmh");
     Ok(())
 }
 
 pub fn hll_sketch(
     precision: u32,
-    list_path: String,
+    files: Vec<String>,
     kmer_length: usize,
     output_name: String,
     threads: u32,
     seed: u64
 ) -> Result<(), Box<dyn Error>> {
-    // files list
-    let files: Vec<String> = {
-        let f = File::open(list_path)?;
-        BufReader::new(f)
-            .lines()
-            .filter_map(|line| line.ok())
-            .filter(|line| !line.trim().is_empty())
-            .collect()
-    };
 
     // build an HLL per file in parallel
     let hll_vec: Vec<HyperLogLog<i64>> = files
@@ -365,35 +343,18 @@ pub fn hll_sketch(
     // names & params
     to_writer_pretty(&File::create(format!("{}_files.json", &output_name))?, &files)?;
 
-    let data = json!({
-        "k": kmer_length.to_string(),
-        "algorithm": "hll",
-        "precision": precision.to_string(),
-    });
-    File::create(format!("{}_parameters.json", &output_name))?
-        .write_all(serde_json::to_string_pretty(&data)?.as_bytes())?;
-
     println!("Serialized sketches with hll");
     Ok(())
 }
 
 pub fn ull_sketch(
     precision: u32,
-    list_path: String,
+    files: Vec<String>,
     kmer_length: usize,
     output_name: String,
     threads: u32,
     seed: u64
 ) -> Result<(), Box<dyn Error>> {
-    // files list
-    let files: Vec<String> = {
-        let f = File::open(list_path)?;
-        BufReader::new(f)
-            .lines()
-            .filter_map(|line| line.ok())
-            .filter(|line| !line.trim().is_empty())
-            .collect()
-    };
 
     // build a ULL per file in parallel
     let ull_vec: Vec<UltraLogLog> = files
@@ -455,16 +416,8 @@ pub fn ull_sketch(
     }
     encoder.finish().expect("failed to compress");
 
-    // names & params
+    // names
     to_writer_pretty(&File::create(format!("{}_files.json", &output_name))?, &files)?;
-
-    let data = json!({
-        "k": kmer_length.to_string(),
-        "algorithm": "ull",
-        "precision": precision.to_string(),
-    });
-    File::create(format!("{}_parameters.json", &output_name))?
-        .write_all(serde_json::to_string_pretty(&data)?.as_bytes())?;
 
     println!("Serialized sketches with ull");
     Ok(())

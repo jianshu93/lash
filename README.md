@@ -50,6 +50,7 @@ Options:
   -t, --threads <threads>      Number of threads to use [default: 1]
   -a, --algorithm <algorithm>  Which algorithm to use: HyperMinHash (hmh), UltraLogLog (ull), or HyperLogLog (hll) [default: hmh]
   -p, --precision <precision>  Specifiy precision, for ull and hll only. [default: 10]
+  -s, --seed <seed>            Specifiy random seed [default: 42]
   -h, --help                   Print help
 
 
