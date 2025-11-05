@@ -8,7 +8,7 @@ use std::error::Error;
 use crate::hasher::Xxh3Builder;
 
 use std::fs::File;
-use std::io::{BufReader, BufWriter, Write};
+use std::io::{BufReader, BufWriter};
 
 use ultraloglog::UltraLogLog;
 use xxhash_rust::xxh3::xxh3_64_with_seed;
