@@ -28,8 +28,6 @@ use log::info;
 use serde_json::to_writer_pretty;
 use streaming_algorithms::HyperLogLog;
 
-// ===================== common helpers =====================
-
 pub fn filter_out_n(seq: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(seq.len());
     for &c in seq {
@@ -49,8 +47,7 @@ pub fn mask_bits(v: u64, k: usize) -> u64 {
     }
 }
 
-// ===================== distances (unchanged API) =====================
-
+// distances
 pub fn hmh_distance(
     reference_names: Vec<String>,
     ref_sketch_file: String,
@@ -58,7 +55,6 @@ pub fn hmh_distance(
     query_names: Vec<String>,
     query_sketch_file: String,
 ) -> Result<Vec<(String, String, f64)>, Box<dyn Error>> {
-
     fn read_sketches(file_name: &str, names: &Vec<String>) -> std::io::Result<Vec<Sketch>> {
         let file = File::open(file_name).expect(&format!("Error opening {}", file_name));
         let reader = BufReader::new(file);
@@ -170,7 +166,7 @@ pub fn hll_distance(
         .par_iter()
         .map(|&(reference_name, query_name)| {
             let a: f64 = ref_map[reference_name].1; // reference cardinality
-            let b: f64 = query_map[query_name].1;   // query cardinality
+            let b: f64 = query_map[query_name].1; // query cardinality
             let mut ref_hll = ref_map[reference_name].0.clone();
             let q_hll = &query_map[query_name].0;
             ref_hll.union(q_hll);
@@ -183,7 +179,7 @@ pub fn hll_distance(
             // let denominator: f64 = 1.0 + s;
             // let fraction: f64 = numerator / denominator;
             // let distance: f64 = -fraction.ln() / (kmer_length as f64);
-            let frac = 2.0 * s / (1.0 + s); 
+            let frac = 2.0 * s / (1.0 + s);
             let distance = 1.0f64 - frac.powf(1.0 / kmer_length as f64);
             (reference_name.to_string(), query_name.to_string(), distance)
         })
@@ -192,8 +188,6 @@ pub fn hll_distance(
     Ok(results)
 }
 
-// ===================== sketchers: PARALLEL BY FILE =====================
-//
 // Each file is processed to completion in its own task (no inner parallelism / no channels).
 // This is simple, avoids stack overflows, and matches the “parallel by sample” request.
 
@@ -202,9 +196,8 @@ pub fn hmh_sketch(
     kmer_length: usize,
     output_name: String,
     threads: u32,
-    seed: u64
+    seed: u64,
 ) -> Result<(), Box<dyn Error>> {
-
     // build a Sketch per file in parallel
     let sketches: HashMap<String, Sketch> = files
         .par_iter()
@@ -224,14 +217,16 @@ pub fn hmh_sketch(
                         let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
                         while let Some(km) = it.next() {
                             let canon = km.min(km.reverse_complement());
-                            let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                            let masked =
+                                mask_bits(canon.get_compressed_value() as u64, kmer_length);
                             global.add_bytes_with_seed(&(masked as u32).to_le_bytes(), seed);
                         }
                     } else if kmer_length == 16 {
                         let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
                         while let Some(km) = it.next() {
                             let canon = km.min(km.reverse_complement());
-                            let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                            let masked =
+                                mask_bits(canon.get_compressed_value() as u64, kmer_length);
                             global.add_bytes_with_seed(&(masked as u32).to_le_bytes(), seed);
                         }
                     } else if kmer_length <= 32 {
@@ -253,7 +248,10 @@ pub fn hmh_sketch(
 
     // write names list
     let names: Vec<String> = sketches.keys().cloned().collect();
-    to_writer_pretty(&File::create(format!("{}_files.json", output_name))?, &names)?;
+    to_writer_pretty(
+        &File::create(format!("{}_files.json", output_name))?,
+        &names,
+    )?;
 
     // serialize sketches (compressed)
     let out_bin = format!("{}_sketches.bin", output_name);
@@ -277,9 +275,8 @@ pub fn hll_sketch(
     kmer_length: usize,
     output_name: String,
     threads: u32,
-    seed: u64
+    seed: u64,
 ) -> Result<(), Box<dyn Error>> {
-
     // build an HLL per file in parallel
     let hll_vec: Vec<HyperLogLog<i64>> = files
         .par_iter()
@@ -299,14 +296,16 @@ pub fn hll_sketch(
                         let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
                         while let Some(km) = it.next() {
                             let canon = km.min(km.reverse_complement());
-                            let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                            let masked =
+                                mask_bits(canon.get_compressed_value() as u64, kmer_length);
                             hll.push_hash64(xxh3_64_with_seed(&masked.to_le_bytes(), seed));
                         }
                     } else if kmer_length == 16 {
                         let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
                         while let Some(km) = it.next() {
                             let canon = km.min(km.reverse_complement());
-                            let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                            let masked =
+                                mask_bits(canon.get_compressed_value() as u64, kmer_length);
                             hll.push_hash64(xxh3_64_with_seed(&masked.to_le_bytes(), seed));
                         }
                     } else if kmer_length <= 32 {
@@ -341,7 +340,10 @@ pub fn hll_sketch(
     encoder.finish().expect("failed to compress");
 
     // names & params
-    to_writer_pretty(&File::create(format!("{}_files.json", &output_name))?, &files)?;
+    to_writer_pretty(
+        &File::create(format!("{}_files.json", &output_name))?,
+        &files,
+    )?;
 
     println!("Serialized sketches with hll");
     Ok(())
@@ -353,9 +355,8 @@ pub fn ull_sketch(
     kmer_length: usize,
     output_name: String,
     threads: u32,
-    seed: u64
+    seed: u64,
 ) -> Result<(), Box<dyn Error>> {
-
     // build a ULL per file in parallel
     let ull_vec: Vec<UltraLogLog> = files
         .par_iter()
@@ -375,14 +376,16 @@ pub fn ull_sketch(
                         let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
                         while let Some(km) = it.next() {
                             let canon = km.min(km.reverse_complement());
-                            let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                            let masked =
+                                mask_bits(canon.get_compressed_value() as u64, kmer_length);
                             ull.add(xxh3_64_with_seed(&masked.to_le_bytes(), seed));
                         }
                     } else if kmer_length == 16 {
                         let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
                         while let Some(km) = it.next() {
                             let canon = km.min(km.reverse_complement());
-                            let masked = mask_bits(canon.get_compressed_value() as u64, kmer_length);
+                            let masked =
+                                mask_bits(canon.get_compressed_value() as u64, kmer_length);
                             ull.add(xxh3_64_with_seed(&masked.to_le_bytes(), seed));
                         }
                     } else if kmer_length <= 32 {
@@ -417,7 +420,10 @@ pub fn ull_sketch(
     encoder.finish().expect("failed to compress");
 
     // names
-    to_writer_pretty(&File::create(format!("{}_files.json", &output_name))?, &files)?;
+    to_writer_pretty(
+        &File::create(format!("{}_files.json", &output_name))?,
+        &files,
+    )?;
 
     println!("Serialized sketches with ull");
     Ok(())
