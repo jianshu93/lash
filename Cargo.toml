@@ -27,7 +27,7 @@ env_logger = { version = "0.11" }
 byteorder = { version = "1.5", optional = true }
 serde_json = "1.0"
 ## streaming_algorithms = { git = "https://github.com/jianshu93/streaming_algorithms.git" }
-streaming_algorithms = {version = "0.3.3", features = ["serde"]}
+streaming_algorithms = {version = "0.3.3", features = ["serde", "stdsimd"]}
 kmerutils = "0.0.14"
 ## kmerutils = { git = "https://github.com/jianshu93/kmerutils.git"}
 ultraloglog = { version = "0.1.6" , features = ["serde"]}

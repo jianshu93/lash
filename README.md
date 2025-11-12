@@ -22,8 +22,8 @@ We hope that you find this tool helpful in your scientific endeavors!
 ## Quick install
 ```bash
 ### pre-compiled binary for Linux
-wget https://github.com/jianshu93/lash/releases/download/v0.1.2/lash_Linux_x86-64_v0.1.2.zip
-unzip lash_Linux_x86-64_v0.1.2.zip
+wget https://github.com/jianshu93/lash/releases/download/v0.1.4/lash_Linux_x86-64_v0.1.4.zip
+unzip lash_Linux_x86-64_v0.1.4.zip
 chomd a+x ./lash
 ./lash -h
 
@@ -39,11 +39,30 @@ cargo build --release
 ```
 
 ## Usage
+
 ```bash
+$ lash -h
+Fast and Memory Efficient (Meta)genome Sketching via HyperLogLog, HyperMinhash and UltraLogLog
+
+Usage: lash [COMMAND]
+
+Commands:
+  sketch  Sketches genomes and serializes them, sketches are compressed
+  dist    Computes distance between sketches
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+```
+
+```bash
+$ lash sketch -h
 
  ************** initializing logger *****************
 
-Fast and Memory Efficient Genome Sketching via HyperMinHash and UltraLogLog
+Sketches genomes and serializes them, sketches are compressed
 
 Usage: lash sketch [OPTIONS] --file <file>
 
@@ -51,12 +70,18 @@ Options:
   -f, --file <file>            One file containing list of FASTA/FASTQ files (.gz/.bz2/.zstd supported), one per line. File must be UTF-8.
   -o, --output <output>        Input a prefix/name for your output files [default: sketch]
   -k, --kmer <kmer_length>     Length of the kmer [default: 16]
-  -t, --threads <threads>      Number of threads to use [default: 1]
+  -t, --threads <threads>      Number of threads to use, default to all logical cores
   -a, --algorithm <algorithm>  Which algorithm to use: HyperMinHash (hmh), UltraLogLog (ull), or HyperLogLog (hll) [default: hmh]
   -p, --precision <precision>  Specifiy precision, for ull and hll only. [default: 10]
-  -s, --seed <seed>            Specifiy random seed [default: 42]
+  -s, --seed <seed>            Random seed [default: 42]
   -h, --help                   Print help
 
+
+$ ./lash dist -h
+
+ ************** initializing logger *****************
+
+Computes distance between sketches
 
 Usage: lash dist [OPTIONS] --query <query> --reference <reference>
 
@@ -64,7 +89,7 @@ Options:
   -q, --query <query>              Prefix to search for query genome files
   -r, --reference <reference>      Prefix to search for reference genome files
   -o, --output_file <output_file>  Name of output file to write results [default: dist.txt]
-  -t, --threads <threads>          Number of threads to use [default: 1]
+  -t, --threads <threads>          Number of threads to use, default to all logical cores
   -e, --estimator <estimator>      Specify estimator (fgra or ml), for ull only [default: fgra]
   -h, --help                       Print help
 ```
@@ -79,7 +104,7 @@ lash dist -q ./skh -r ./skh -t 8 -o dist
 
 ## Output
 
-Output format is the same with Mash, first column query, second column reference name， third column Mash distance
+Output format is the same with Mash/BinDash, first column query, second column reference name， third column Mash distance
 
 ## References
 1. Yu YW, Weber GM. Hyperminhash: Minhash in loglog space. IEEE Transactions on Knowledge and Data Engineering. 2020 Mar 17;34(1):328-39.

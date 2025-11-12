@@ -171,7 +171,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .filter(|l| !l.trim().is_empty())
                     .collect()
             };
-            
+
             let result: Result<(), Box<dyn Error>>;
             if alg == "hmh" {
                 // create hypermash object and sketch
@@ -180,7 +180,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     kmer_length,
                     output_name.clone(),
                     threads as u32,
-                    seed
+                    seed,
                 );
             } else if alg == "hll" {
                 let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
@@ -190,7 +190,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     kmer_length,
                     output_name.clone(),
                     threads as u32,
-                    seed
+                    seed,
                 );
             } else if alg == "ull" {
                 let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
@@ -200,7 +200,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     kmer_length,
                     output_name.clone(),
                     threads as u32,
-                    seed
+                    seed,
                 );
             } else {
                 // input for alg is not hmh, ull, or hll
@@ -217,21 +217,18 @@ fn main() -> Result<(), Box<dyn Error>> {
                     "precision": precision.to_string(),
                     "seed": seed.to_string()
                 });
-            }
-            else {
-                params = json!({ 
-                    "k": kmer_length.to_string(), 
-                    "algorithm": &alg, 
+            } else {
+                params = json!({
+                    "k": kmer_length.to_string(),
+                    "algorithm": &alg,
                     "seed": seed.to_string()
                 });
-                
             }
 
             // writing out
             File::create(format!("{}_parameters.json", &output_name))?
-                    .write_all(serde_json::to_string_pretty(&params)?.as_bytes())?;
+                .write_all(serde_json::to_string_pretty(&params)?.as_bytes())?;
 
-            
             result
         }
         Some(("dist", s_matches)) => {
@@ -362,7 +359,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .expect(&format!("Error with reading from {}", ref_namefile));
 
             // let mut results: Vec<(String, String, f64)> = Vec::new();
-            // --- compute all pairwise distances into a single results Vec
+            // compute all pairwise distances into a single results Vec
             let results: Vec<(String, String, f64)> = if ref_map["algorithm"] == "hmh" {
                 hmh_distance(
                     reference_names,
@@ -435,12 +432,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                         info!("Union: {}, a: {}, b: {}", union_count, a, b);
 
                         let similarity = (a + b - union_count) / union_count;
-                        let s = if similarity < 0.0 { 
-                            0.0
-                        } else {
-                            similarity
-                        };
-                        let frac = 2.0 * s / (1.0 + s); 
+                        let s = if similarity < 0.0 { 0.0 } else { similarity };
+                        let frac = 2.0 * s / (1.0 + s);
                         let distance = 1.0f64 - frac.powf(1.0 / kmer_length as f64);
 
                         (ref_name.to_string(), qry_name.to_string(), distance)
@@ -458,7 +451,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .unwrap()
             };
 
-            // --- write output ---
+            // write output
             let mut output = File::create(output_file)?; // don't append ".txt" again
             writeln!(output, "Query\tReference\tDistance")?;
 
