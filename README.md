@@ -4,6 +4,10 @@
 
 This is a software for genome sketching and distance approximation in LogLog space. Thus, it is named LASH (**L**oglog h**ASH**)
 
+<div align="center">
+  <img width="30%" src ="lash-logo.png">
+</div>
+
 ### Description ###
 Genome sketching can be extremely accurate but requires a huge amount of memory for MinHash-like algorithms. Recently, a new algorithm combining MinHash and HyperLogLog, called HyerMinHash was invented (1), which can perform MinHash in loglog space, a significant decrease in space/memory requirement. Together with [lukaslueg](https://github.com/lukaslueg), we first created a Rust library [hyperminhash](https://github.com/lukaslueg/hyperminhash) and then combined rolling hashing with HyperMinHash for extremely fast processing of genomic sequences. 
 
