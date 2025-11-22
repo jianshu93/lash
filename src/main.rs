@@ -2,21 +2,16 @@ use clap::{Arg, ArgAction, Command};
 // use needletail::kmer::Kmers;
 // use needletail::sequence::canonical;
 use hashbrown::HashMap;
-use rayon::prelude::*;
 use std::error::Error;
 //use xxhash_rust::xxh3::Xxh3Builder;
 use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use zstd::stream::Decoder;
 mod hasher;
-use hasher::Xxh3Builder;
-use log::info;
 use serde_json::json;
 mod utils;
-use crate::utils::{hll_distance, hll_sketch, hmh_distance, hmh_sketch, ull_sketch};
-use ultraloglog::{Estimator, MaximumLikelihoodEstimator, UltraLogLog};
+use crate::utils::{hll_distance, hll_sketch, hmh_distance, hmh_sketch, ull_sketch, ull_distance};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Initialize logger
@@ -139,6 +134,16 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .help("Specify estimator (fgra or ml), for ull only")
                 .required(false)
                 .default_value("fgra")
+                .action(ArgAction::Set)
+            )
+            .arg(
+                Arg::new("model")
+                .short('m')
+                .long("model")
+                .help("Equation used to calculate distance 1 for poisson model or 0 for binomial model")
+                .required(false)
+                .value_parser(clap::value_parser!(u64))
+                .default_value("1")
                 .action(ArgAction::Set)
             )
         )
@@ -364,87 +369,29 @@ fn main() -> Result<(), Box<dyn Error>> {
                 hmh_distance(
                     reference_names,
                     ref_sketch_file_name,
-                    kmer_length,
                     query_names,
                     query_sketch_file_name,
                 )
                 .unwrap()
             } else if ref_map["algorithm"] == "ull" {
-                // ULL: build maps, pairs, and compute
-                let ref_sketch_file =
-                    File::open(ref_sketch_file_name).expect("Failed to open file");
-                let query_sketch_file =
-                    File::open(query_sketch_file_name).expect("Failed to open file");
+
                 let estimator = s_matches
                     .get_one::<String>("estimator")
                     .cloned()
                     .unwrap_or_else(|| "fgra".to_string());
 
-                fn create_ull_map(
-                    sketch_file: File,
-                    names: &Vec<String>,
-                    estimator: &String,
-                ) -> Result<HashMap<String, (UltraLogLog, f64), Xxh3Builder>, std::io::Error>
-                {
-                    let hasher = Xxh3Builder { seed: 93 };
-                    let mut sketches = HashMap::with_hasher(hasher);
-                    let reader = BufReader::new(sketch_file);
-                    let mut decoder = Decoder::new(reader).expect("failed to create decompressor");
-                    for file in names {
-                        let ull = UltraLogLog::load(&mut decoder)?;
-                        let c: f64 = match estimator.as_str() {
-                            "fgra" => ull.get_distinct_count_estimate(),
-                            "ml" => MaximumLikelihoodEstimator.estimate(&ull),
-                            _ => panic!("estimator needs to be either fgra or ml"),
-                        };
-                        sketches.insert(file.clone(), (ull, c));
-                    }
-                    Ok(sketches)
-                }
-
-                let ref_map =
-                    create_ull_map(ref_sketch_file, &reference_names, &estimator).unwrap();
-                let query_map =
-                    create_ull_map(query_sketch_file, &query_names, &estimator).unwrap();
-
-                let pairs: Vec<(&str, &str)> = ref_map
-                    .keys()
-                    .flat_map(|k1| query_map.keys().map(move |k2| (k1.as_str(), k2.as_str())))
-                    .collect();
-
-                pairs
-                    .par_iter()
-                    .map(|&(ref_name, qry_name)| {
-                        let a: f64 = ref_map[ref_name].1;
-                        let b: f64 = query_map[qry_name].1;
-
-                        let union_ull =
-                            UltraLogLog::merge(&ref_map[ref_name].0, &query_map[qry_name].0)
-                                .expect("failed to merge sketches");
-
-                        //let union_count = union_ull.get_distinct_count_estimate();
-                        let union_count: f64 = match estimator.as_str() {
-                            "fgra" => union_ull.get_distinct_count_estimate(),
-                            "ml" => MaximumLikelihoodEstimator.estimate(&union_ull),
-                            _ => panic!("estimator needs to be either fgra or ml"),
-                        };
-
-                        info!("Union: {}, a: {}, b: {}", union_count, a, b);
-
-                        let similarity = (a + b - union_count) / union_count;
-                        let s = if similarity < 0.0 { 0.0 } else { similarity };
-                        let frac = 2.0 * s / (1.0 + s);
-                        let distance = 1.0f64 - frac.powf(1.0 / kmer_length as f64);
-
-                        (ref_name.to_string(), qry_name.to_string(), distance)
-                    })
-                    .collect()
+                ull_distance(
+                    reference_names,
+                    ref_sketch_file_name,
+                    query_names,
+                    query_sketch_file_name,
+                    estimator
+                ).unwrap()
             } else {
                 // HLL
                 hll_distance(
                     reference_names,
                     ref_sketch_file_name,
-                    kmer_length,
                     query_names,
                     query_sketch_file_name,
                 )
@@ -455,8 +402,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             let mut output = File::create(output_file)?; // don't append ".txt" again
             writeln!(output, "Query\tReference\tDistance")?;
 
+            let equation = *s_matches.get_one::<u64>("model").expect("required");
+
             // results are (reference, query, distance)
-            for (reference_name, query_name, distance) in &results {
+            for (reference_name, query_name, frac) in &results {
                 let query_basename = Path::new(query_name.as_str())
                     .file_name()
                     .and_then(|os_str| os_str.to_str())
@@ -470,7 +419,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let d = if query_basename == reference_basename {
                     0.0
                 } else {
-                    *distance
+                    match equation {
+                        1 => (-frac.ln() / (kmer_length as f64)).min(1.0),
+                        0 => 1.0f64 - frac.powf(1.0 / kmer_length as f64),
+                        _ => panic!("model needs to be 0 or 1")
+                    }
+                    // *distance
                 };
 
                 writeln!(output, "{}\t{}\t{:.6}", query_name, reference_name, d)?;

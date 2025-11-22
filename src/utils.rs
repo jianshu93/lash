@@ -10,7 +10,6 @@ use crate::hasher::Xxh3Builder;
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 
-use ultraloglog::UltraLogLog;
 use xxhash_rust::xxh3::xxh3_64_with_seed;
 // use xxhash_rust::xxh3::xxh3_64;
 
@@ -23,6 +22,7 @@ use kmerutils::base::{
     sequence::Sequence as KSeq,
     CompressedKmerT, Kmer16b32bit, Kmer32bit, Kmer64bit,
 };
+use ultraloglog::{Estimator, MaximumLikelihoodEstimator, UltraLogLog};
 
 use log::info;
 use serde_json::to_writer_pretty;
@@ -51,7 +51,6 @@ pub fn mask_bits(v: u64, k: usize) -> u64 {
 pub fn hmh_distance(
     reference_names: Vec<String>,
     ref_sketch_file: String,
-    kmer_length: usize,
     query_names: Vec<String>,
     query_sketch_file: String,
 ) -> Result<Vec<(String, String, f64)>, Box<dyn Error>> {
@@ -116,11 +115,83 @@ pub fn hmh_distance(
                 let numerator = 2.0 * similarity;
                 let denominator = 1.0 + similarity;
                 let fraction: f64 = numerator / denominator;
-                let distance = 1.0f64 - fraction.powf(1.0 / kmer_length as f64);
+                // let distance = 1.0f64 - fraction.powf(1.0 / kmer_length as f64);
 
-                (reference_name.clone(), query_name.clone(), distance)
+                (reference_name.clone(), query_name.clone(), fraction)
             },
         )
+        .collect();
+    Ok(results)
+}
+
+pub fn ull_distance(
+    reference_names: Vec<String>,
+    ref_sketch_file: String,
+    query_names: Vec<String>,
+    query_sketch_file: String,
+    estimator: String,
+) -> Result<Vec<(String, String, f64)>, Box<dyn Error>> {
+    let ref_sketch_file = File::open(ref_sketch_file).expect("Failed to open file");
+    let query_sketch_file = File::open(query_sketch_file).expect("Failed to open file");
+
+    fn create_ull_map(
+        sketch_file: File,
+        names: &Vec<String>,
+        estimator: &String,
+    ) -> Result<HashMap<String, (UltraLogLog, f64), Xxh3Builder>, std::io::Error>
+    {
+        let hasher = Xxh3Builder { seed: 93 };
+        let mut sketches = HashMap::with_hasher(hasher);
+        let reader = BufReader::new(sketch_file);
+        let mut decoder = Decoder::new(reader).expect("failed to create decompressor");
+        for file in names {
+            let ull = UltraLogLog::load(&mut decoder)?;
+            let c: f64 = match estimator.as_str() {
+                "fgra" => ull.get_distinct_count_estimate(),
+                "ml" => MaximumLikelihoodEstimator.estimate(&ull),
+                _ => panic!("estimator needs to be either fgra or ml"),
+            };
+            sketches.insert(file.clone(), (ull, c));
+        }
+        Ok(sketches)
+    }
+
+    let ref_map =
+        create_ull_map(ref_sketch_file, &reference_names, &estimator).unwrap();
+    let query_map =
+        create_ull_map(query_sketch_file, &query_names, &estimator).unwrap();
+
+    let pairs: Vec<(&str, &str)> = ref_map
+        .keys()
+        .flat_map(|k1| query_map.keys().map(move |k2| (k1.as_str(), k2.as_str())))
+        .collect();
+
+    let results: Vec<(String, String, f64)> = pairs
+        .par_iter()
+        .map(|&(ref_name, qry_name)| {
+            let a: f64 = ref_map[ref_name].1;
+            let b: f64 = query_map[qry_name].1;
+
+            let union_ull =
+                UltraLogLog::merge(&ref_map[ref_name].0, &query_map[qry_name].0)
+                    .expect("failed to merge sketches");
+
+            //let union_count = union_ull.get_distinct_count_estimate();
+            let union_count: f64 = match estimator.as_str() {
+                "fgra" => union_ull.get_distinct_count_estimate(),
+                "ml" => MaximumLikelihoodEstimator.estimate(&union_ull),
+                _ => panic!("estimator needs to be either fgra or ml"),
+            };
+
+            info!("Union: {}, a: {}, b: {}", union_count, a, b);
+
+            let similarity = (a + b - union_count) / union_count;
+            let s = if similarity < 0.0 { 0.0 } else { similarity };
+            let frac = 2.0 * s / (1.0 + s);
+            // let distance = 1.0f64 - frac.powf(1.0 / kmer_length as f64);
+
+            (ref_name.to_string(), qry_name.to_string(), frac)
+        })
         .collect();
     Ok(results)
 }
@@ -128,7 +199,6 @@ pub fn hmh_distance(
 pub fn hll_distance(
     reference_names: Vec<String>,
     ref_sketch_file: String,
-    kmer_length: usize,
     query_names: Vec<String>,
     query_sketch_file: String,
 ) -> Result<Vec<(String, String, f64)>, Box<dyn Error>> {
@@ -180,8 +250,8 @@ pub fn hll_distance(
             // let fraction: f64 = numerator / denominator;
             // let distance: f64 = -fraction.ln() / (kmer_length as f64);
             let frac = 2.0 * s / (1.0 + s);
-            let distance = 1.0f64 - frac.powf(1.0 / kmer_length as f64);
-            (reference_name.to_string(), query_name.to_string(), distance)
+            // let distance = 1.0f64 - frac.powf(1.0 / kmer_length as f64);
+            (reference_name.to_string(), query_name.to_string(), frac)
         })
         .collect();
 
