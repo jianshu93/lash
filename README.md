@@ -91,6 +91,7 @@ Options:
   -o, --output_file <output_file>  Name of output file to write results [default: dist.txt]
   -t, --threads <threads>          Number of threads to use, default to all logical cores
   -e, --estimator <estimator>      Specify estimator (fgra or ml), for ull only [default: fgra]
+  -m, --model <model>              Specify equation used to calculate distance, 0 for binomial model, 1 for poisson model [default: 1]
   -h, --help                       Print help
 ```
 
