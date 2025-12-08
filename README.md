@@ -30,7 +30,7 @@ chomd a+x ./lash
 ### Install from cargo, install cargo first here: https://rustup.rs, cargo will be installed by default
 cargo install lash-rs
 
-### compiling from source
+### compiling from source. You need to install nightly Rust, rustup can be used to manage different versions: https://rustup.rs
 git clone https://github.com/jianshu93/lash
 cd lash
 cargo build --release
