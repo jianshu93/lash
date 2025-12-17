@@ -968,6 +968,7 @@ dependencies = [
  "kmerutils",
  "log",
  "needletail",
+ "num-traits",
  "num_cpus",
  "rayon",
  "serde_json",

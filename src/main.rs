@@ -12,6 +12,21 @@ mod hasher;
 use serde_json::json;
 mod utils;
 use crate::utils::{hll_distance, hll_sketch, hmh_distance, hmh_sketch, ull_sketch, ull_distance};
+use num_traits::Float;
+
+pub enum Matrix {
+    F32(Vec<Vec<f32>>),
+    F64(Vec<Vec<f64>>),
+}
+
+impl Matrix {
+    pub fn set<F: Float>(&mut self, i: usize, j: usize, value: F) {
+        match self {
+            Matrix::F32(m) => m[i][j] = F::to_f32(&value).unwrap(),
+            Matrix::F64(m) => m[i][j] = F::to_f64(&value).unwrap(),
+        }
+    }
+}
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Initialize logger
@@ -115,7 +130,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .long("output_file")
                 .help("Name of output file to write results")
                 .required(false)
-                .default_value("dist.txt")
+                .default_value("dist")
                 .action(ArgAction::Set)
             )
             .arg(
@@ -145,6 +160,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .value_parser(clap::value_parser!(u64))
                 .default_value("1")
                 .action(ArgAction::Set)
+            )
+            .arg(
+                Arg::new("fp32")
+                .long("fp32")
+                .help("Distance output in float 32 instead of 64")
+                .action(clap::ArgAction::SetTrue)
+                .num_args(0)
+            )
+            .arg(
+                Arg::new("dm")
+                .long("dm")
+                .help("Prints diagonal matrix")
+                .action(clap::ArgAction::SetTrue)
+                .num_args(0)
             )
         )
         .get_matches();
@@ -239,6 +268,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some(("dist", s_matches)) => {
             let ref_prefix = s_matches.get_one::<String>("reference").expect("required");
             let query_prefix = s_matches.get_one::<String>("query").expect("required");
+
+            let same_files = ref_prefix == query_prefix; // used for triangular matrix at the end
 
             fn find_files(prefix: &String) -> std::io::Result<HashMap<&str, String>> {
                 let mut files: Vec<String> = Vec::new();
@@ -363,6 +394,31 @@ fn main() -> Result<(), Box<dyn Error>> {
             let reference_names: Vec<String> = read_names(&ref_namefile)
                 .expect(&format!("Error with reading from {}", ref_namefile));
 
+            let create_matrix = s_matches.get_flag("dm");
+            let fp32 = s_matches.get_flag("fp32");
+
+            let mut matrix = if fp32 {
+                Matrix::F32(Vec::new())
+            } else {
+                Matrix::F64(Vec::new())
+            };
+            let mut query_idx = HashMap::new();
+            let mut ref_idx = HashMap::new();
+            
+            if create_matrix {
+                if fp32 {
+                    matrix = Matrix::F32(vec![vec![0.0f32; reference_names.len()]; query_names.len()]);
+                } else {
+                    matrix = Matrix::F64(vec![vec![0.0f64; reference_names.len()]; query_names.len()]);
+                }
+                for (i, name) in query_names.iter().enumerate() {
+                    query_idx.insert(name.clone(), i);
+                }
+                for (i, name) in reference_names.iter().enumerate() {
+                    ref_idx.insert(name.clone(), i);
+                }
+            }
+
             // let mut results: Vec<(String, String, f64)> = Vec::new();
             // compute all pairwise distances into a single results Vec
             let results: Vec<(String, String, f64)> = if ref_map["algorithm"] == "hmh" {
@@ -399,11 +455,31 @@ fn main() -> Result<(), Box<dyn Error>> {
             };
 
             // write output
-            let mut output = File::create(output_file)?; // don't append ".txt" again
-            writeln!(output, "Query\tReference\tDistance")?;
-
+            let mut output = File::create(output_file)?; // don't append ".txt"
             let equation = *s_matches.get_one::<u64>("model").expect("required");
+            let fp32 = s_matches.get_flag("fp32");
 
+            fn compute_distance<F: Float>(frac: f64, kmer_length: usize, equation: u8) -> F {
+                match equation {
+                    1 => {
+                        // -ln(frac)/kmer_length, clamped to 1.0
+                        let frac_f = F::from(frac).unwrap();
+                        let k = F::from(kmer_length).unwrap();
+                        (-frac_f.ln() / k).min(F::one())
+                    }
+                    0 => {
+                        // 1 - frac^(1/kmer_length)
+                        let frac_f = F::from(frac).unwrap();
+                        let k = F::from(kmer_length).unwrap();
+                        F::one() - frac_f.powf(F::one() / k)
+                    }
+                    _ => panic!("model needs to be 0 or 1"),
+                }
+            }
+            if !create_matrix {
+                writeln!(output, "Query\tReference\tDistance")?;
+            }
+            
             // results are (reference, query, distance)
             for (reference_name, query_name, frac) in &results {
                 let query_basename = Path::new(query_name.as_str())
@@ -416,19 +492,93 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .and_then(|os_str| os_str.to_str())
                     .unwrap_or(reference_name.as_str());
 
-                let d = if query_basename == reference_basename {
-                    0.0
-                } else {
-                    match equation {
-                        1 => (-frac.ln() / (kmer_length as f64)).min(1.0),
-                        0 => 1.0f64 - frac.powf(1.0 / kmer_length as f64),
-                        _ => panic!("model needs to be 0 or 1")
+                if fp32 {
+                    let d: f32 = if query_basename == reference_basename {
+                        0.0
+                    } else {
+                        compute_distance::<f32>(*frac, kmer_length, equation as u8)
+                    };
+                    if !create_matrix {
+                        writeln!(output, "{}\t{}\t{:.6}", query_name, reference_name, d)?;
                     }
-                    // *distance
-                };
-
-                writeln!(output, "{}\t{}\t{:.6}", query_name, reference_name, d)?;
+                    else {
+                        let i = query_idx[query_name];
+                        let j = ref_idx[reference_name];
+                        matrix.set(i, j, d); // fill in the matrix with distance
+                    }
+                } else {
+                    let d: f64 = if query_basename == reference_basename {
+                        0.0
+                    } else {
+                        compute_distance::<f64>(*frac, kmer_length, equation as u8)
+                    };
+                    if !create_matrix {
+                        writeln!(output, "{}\t{}\t{:.6}", query_name, reference_name, d)?;
+                    }
+                    else {
+                        let j = ref_idx[reference_name];
+                        let i = query_idx[query_name];
+                        matrix.set(i, j, d); // fill in the matrix with distance
+                    }
+                }
             }
+
+            if create_matrix {
+                // Write column headers (reference names)
+                write!(output, "\t")?; // Empty cell for top-left corner
+                let ref_names: Vec<&String> = ref_idx.keys().collect();
+                for ref_name in &ref_names {
+                    write!(output, "{}\t", ref_name)?;
+                }
+                writeln!(output)?;
+
+                // Write matrix rows with query names
+                let query_names: Vec<&String> = query_idx.keys().collect();
+
+                match &matrix { // f32 matrix
+                    Matrix::F32(m) => {
+                        for (row_num, ref_name) in ref_names.iter().enumerate() {
+                            let row_idx = ref_idx[ref_name.as_str()];
+                            write!(output, "{}\t", ref_name)?;
+                            
+                            for (col_num, q_name) in query_names.iter().enumerate() {
+                                if row_num > col_num && same_files {
+                                    // Add "-" for redundant distance
+                                    write!(output, "-\t")?;
+                                }
+                                else {
+                                    let col_idx = query_idx[q_name.as_str()];
+                                    let dist = &m[row_idx][col_idx];
+                                    write!(output, "{:.6}\t", dist)?
+                                }
+                            }
+                            writeln!(output)?;
+                            
+                        }
+                    }
+                    Matrix::F64(m) => { //f64 matrix
+                        for (row_num, ref_name) in ref_names.iter().enumerate() {
+                            let row_idx = ref_idx[ref_name.as_str()];
+                            write!(output, "{}\t", ref_name)?;
+                            
+                            for (col_num, q_name) in query_names.iter().enumerate() {
+                                if row_num > col_num && same_files {
+                                    // Add "-" for redundant distance
+                                    write!(output, "-\t")?;
+                                }
+                                else {
+                                    let col_idx = query_idx[q_name.as_str()];
+                                    let dist = &m[row_idx][col_idx];
+                                    write!(output, "{:.6}\t", dist)?
+                                }
+                            }
+                            writeln!(output)?;
+                            
+                        }
+                    }
+                }
+            }
+
             println!("Distances computed.");
             Ok(())
         }

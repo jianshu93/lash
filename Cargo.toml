@@ -34,3 +34,4 @@ ultraloglog = { version = "0.1.6" , features = ["serde"]}
 ## ultraloglog = { git = "https://github.com/waynexia/ultraloglog", features = ["serde"] }
 num_cpus = "1.13"
 zstd = { version = "0.13", features = ["zstdmt"] }
+num-traits = "0.2.19"

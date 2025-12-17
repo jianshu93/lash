@@ -47,6 +47,7 @@ pub fn mask_bits(v: u64, k: usize) -> u64 {
     }
 }
 
+
 // distances
 pub fn hmh_distance(
     reference_names: Vec<String>,
@@ -103,7 +104,7 @@ pub fn hmh_distance(
         .map(
             |&(reference_name, reference_sketch, query_name, query_sketch)| {
                 let similarity = query_sketch.similarity(reference_sketch).max(0.0);
-
+ 
                 // for debugging
                 info!(
                     "Union: {}, a: {}, b: {}",
@@ -114,7 +115,7 @@ pub fn hmh_distance(
 
                 let numerator = 2.0 * similarity;
                 let denominator = 1.0 + similarity;
-                let fraction: f64 = numerator / denominator;
+                let fraction = numerator / denominator;
                 // let distance = 1.0f64 - fraction.powf(1.0 / kmer_length as f64);
 
                 (reference_name.clone(), query_name.clone(), fraction)
