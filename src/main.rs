@@ -155,7 +155,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Arg::new("model")
                 .short('m')
                 .long("model")
-                .help("Equation used to calculate distance 1 for poisson model or 0 for binomial model")
+                .help("Equation used to calculate distance: 1 for poisson model or 0 for binomial model")
                 .required(false)
                 .value_parser(clap::value_parser!(u64))
                 .default_value("1")
@@ -171,7 +171,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             .arg(
                 Arg::new("dm")
                 .long("dm")
-                .help("Prints diagonal matrix")
+                .help("Prints distance matrix")
                 .action(clap::ArgAction::SetTrue)
                 .num_args(0)
             )
@@ -268,8 +268,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         Some(("dist", s_matches)) => {
             let ref_prefix = s_matches.get_one::<String>("reference").expect("required");
             let query_prefix = s_matches.get_one::<String>("query").expect("required");
-
-            let same_files = ref_prefix == query_prefix; // used for triangular matrix at the end
 
             fn find_files(prefix: &String) -> std::io::Result<HashMap<&str, String>> {
                 let mut files: Vec<String> = Vec::new();
@@ -395,70 +393,38 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .expect(&format!("Error with reading from {}", ref_namefile));
 
             let create_matrix = s_matches.get_flag("dm");
-            let fp32 = s_matches.get_flag("fp32");
 
-            let mut matrix = if fp32 {
-                Matrix::F32(Vec::new())
-            } else {
-                Matrix::F64(Vec::new())
-            };
-            let mut query_idx = HashMap::new();
-            let mut ref_idx = HashMap::new();
+            // let mut matrix = if fp32 {
+            //     Matrix::F32(Vec::new())
+            // } else {
+            //     Matrix::F64(Vec::new())
+            // };
+            // let mut query_idx = HashMap::new();
+            // let mut ref_idx = HashMap::new();
             
-            if create_matrix {
-                if fp32 {
-                    matrix = Matrix::F32(vec![vec![0.0f32; reference_names.len()]; query_names.len()]);
-                } else {
-                    matrix = Matrix::F64(vec![vec![0.0f64; reference_names.len()]; query_names.len()]);
-                }
-                for (i, name) in query_names.iter().enumerate() {
-                    query_idx.insert(name.clone(), i);
-                }
-                for (i, name) in reference_names.iter().enumerate() {
-                    ref_idx.insert(name.clone(), i);
-                }
-            }
+            // if create_matrix {
+            //     if fp32 {
+            //         matrix = Matrix::F32(vec![vec![0.0f32; reference_names.len()]; query_names.len()]);
+            //     } else {
+            //         matrix = Matrix::F64(vec![vec![0.0f64; reference_names.len()]; query_names.len()]);
+            //     }
+            //     for (i, name) in query_names.iter().enumerate() {
+            //         query_idx.insert(name.clone(), i);
+            //     }
+            //     for (i, name) in reference_names.iter().enumerate() {
+            //         ref_idx.insert(name.clone(), i);
+            //     }
+            // }
 
-            // let mut results: Vec<(String, String, f64)> = Vec::new();
-            // compute all pairwise distances into a single results Vec
-            let results: Vec<(String, String, f64)> = if ref_map["algorithm"] == "hmh" {
-                hmh_distance(
-                    reference_names,
-                    ref_sketch_file_name,
-                    query_names,
-                    query_sketch_file_name,
-                )
-                .unwrap()
-            } else if ref_map["algorithm"] == "ull" {
-
-                let estimator = s_matches
-                    .get_one::<String>("estimator")
-                    .cloned()
-                    .unwrap_or_else(|| "fgra".to_string());
-
-                ull_distance(
-                    reference_names,
-                    ref_sketch_file_name,
-                    query_names,
-                    query_sketch_file_name,
-                    estimator
-                ).unwrap()
-            } else {
-                // HLL
-                hll_distance(
-                    reference_names,
-                    ref_sketch_file_name,
-                    query_names,
-                    query_sketch_file_name,
-                )
-                .unwrap()
-            };
-
-            // write output
             let mut output = File::create(output_file)?; // don't append ".txt"
             let equation = *s_matches.get_one::<u64>("model").expect("required");
             let fp32 = s_matches.get_flag("fp32");
 
+            if !create_matrix {
+                writeln!(output, "Reference\tQuery\tDistance")?;
+            }
+            
+            // function to compute distance from fraction
             fn compute_distance<F: Float>(frac: f64, kmer_length: usize, equation: u8) -> F {
                 match equation {
                     1 => {
@@ -476,111 +442,114 @@ fn main() -> Result<(), Box<dyn Error>> {
                     _ => panic!("model needs to be 0 or 1"),
                 }
             }
-            if !create_matrix {
-                writeln!(output, "Query\tReference\tDistance")?;
-            }
             
-            // results are (reference, query, distance)
-            for (reference_name, query_name, frac) in &results {
-                let query_basename = Path::new(query_name.as_str())
-                    .file_name()
-                    .and_then(|os_str| os_str.to_str())
-                    .unwrap_or(query_name.as_str());
 
-                let reference_basename = Path::new(reference_name.as_str())
-                    .file_name()
-                    .and_then(|os_str| os_str.to_str())
-                    .unwrap_or(reference_name.as_str());
+            // for knowing when to use "-" in matrix
+            let same_files = ref_namefile == query_namefile;
+            let mut row = 0;
+            let mut col = 0;
 
-                if fp32 {
-                    let d: f32 = if query_basename == reference_basename {
-                        0.0
-                    } else {
-                        compute_distance::<f32>(*frac, kmer_length, equation as u8)
-                    };
-                    if !create_matrix {
-                        writeln!(output, "{}\t{}\t{:.6}", query_name, reference_name, d)?;
-                    }
-                    else {
-                        let i = query_idx[query_name];
-                        let j = ref_idx[reference_name];
-                        matrix.set(i, j, d); // fill in the matrix with distance
-                    }
-                } else {
-                    let d: f64 = if query_basename == reference_basename {
-                        0.0
-                    } else {
-                        compute_distance::<f64>(*frac, kmer_length, equation as u8)
-                    };
-                    if !create_matrix {
-                        writeln!(output, "{}\t{}\t{:.6}", query_name, reference_name, d)?;
-                    }
-                    else {
-                        let j = ref_idx[reference_name];
-                        let i = query_idx[query_name];
-                        matrix.set(i, j, d); // fill in the matrix with distance
-                    }
+            // callback and emit function
+            let print_list = | r_name: &String, q_name: &String, frac: f64| {
+
+                // empty r_name means printing matrix column names (q_name)
+                if r_name == "" {
+                    write!(output, "\t{}", q_name)?;
                 }
-            }
-
-            if create_matrix {
-                // Write column headers (reference names)
-                write!(output, "\t")?; // Empty cell for top-left corner
-                let ref_names: Vec<&String> = ref_idx.keys().collect();
-                for ref_name in &ref_names {
-                    write!(output, "{}\t", ref_name)?;
+                // empty q_name means printing a new row (r_name) for matrix
+                else if q_name == "" { 
+                    writeln!(output, "")?;
+                    write!(output, "{}", r_name)?;
+                    col = 0;
+                    row += 1;
                 }
-                writeln!(output)?;
 
-                // Write matrix rows with query names
-                let query_names: Vec<&String> = query_idx.keys().collect();
+                // print a distance value
+                else {
+                    // for float32 output
+                    if fp32 {
+                        let d: f32 = if q_name == r_name {
+                            0.0
+                        } else {
+                            compute_distance::<f32>(frac, kmer_length, equation as u8)
+                        };
 
-                match &matrix { // f32 matrix
-                    Matrix::F32(m) => {
-                        for (row_num, ref_name) in ref_names.iter().enumerate() {
-                            let row_idx = ref_idx[ref_name.as_str()];
-                            write!(output, "{}\t", ref_name)?;
-                            
-                            for (col_num, q_name) in query_names.iter().enumerate() {
-                                if row_num > col_num && same_files {
-                                    // Add "-" for redundant distance
-                                    write!(output, "-\t")?;
-                                }
-                                else {
-                                    let col_idx = query_idx[q_name.as_str()];
-                                    let dist = &m[row_idx][col_idx];
-                                    write!(output, "{:.6}\t", dist)?
-                                }
-                            }
-                            writeln!(output)?;
-                            
+                        if !create_matrix {
+                            writeln!(output, "{}\t{}\t{:.6}", r_name, q_name, d).expect("Error writing to file");
                         }
-                    }
-                    Matrix::F64(m) => { //f64 matrix
-                        for (row_num, ref_name) in ref_names.iter().enumerate() {
-                            let row_idx = ref_idx[ref_name.as_str()];
-                            write!(output, "{}\t", ref_name)?;
-                            
-                            for (col_num, q_name) in query_names.iter().enumerate() {
-                                if row_num > col_num && same_files {
-                                    // Add "-" for redundant distance
-                                    write!(output, "-\t")?;
-                                }
-                                else {
-                                    let col_idx = query_idx[q_name.as_str()];
-                                    let dist = &m[row_idx][col_idx];
-                                    write!(output, "{:.6}\t", dist)?
-                                }
+                        else {
+                            col += 1;
+                            if row > col && same_files {
+                                write!(output, "\t-").expect("Error writing to file"); // redundant distance
+                            } else {
+                                write!(output, "\t{:.6}", d).expect("Error writing to file");
                             }
-                            writeln!(output)?;
-                            
+                        }
+                    } else { // for float64 (default) output
+                        let d: f64 = if q_name == r_name {
+                            0.0
+                        } else {
+                            compute_distance::<f64>(frac, kmer_length, equation as u8)
+                        };
+
+                        if !create_matrix {
+                            writeln!(output, "{}\t{}\t{:.6}", r_name, q_name, d).expect("Error writing to file");
+                        }
+                        else {
+                            col += 1;
+                            if row > col && same_files {
+                                write!(output, "\t-").expect("Error writing to file"); // redundant distance
+                            } else {
+                                write!(output, "\t{:.6}", d).expect("Error writing to file");
+                            }
                         }
                     }
                 }
-            }
+                Ok(())
+            };
+
+            // let mut results: Vec<(String, String, f64)> = Vec::new();
+            // compute all pairwise distances into a single results Vec
+            let result = if ref_map["algorithm"] == "hmh" {
+                hmh_distance(
+                    reference_names,
+                    ref_sketch_file_name,
+                    query_names,
+                    query_sketch_file_name,
+                    create_matrix,
+                    print_list
+                )
+                .unwrap()
+            } else if ref_map["algorithm"] == "ull" {
+
+                let estimator = s_matches
+                    .get_one::<String>("estimator")
+                    .cloned()
+                    .unwrap_or_else(|| "fgra".to_string());
+
+                ull_distance(
+                    reference_names,
+                    ref_sketch_file_name,
+                    query_names,
+                    query_sketch_file_name,
+                    estimator, 
+                    create_matrix,
+                    print_list
+                ).unwrap()
+            } else {
+                // HLL
+                hll_distance(
+                    reference_names,
+                    ref_sketch_file_name,
+                    query_names,
+                    query_sketch_file_name,
+                    create_matrix,
+                    print_list
+                ).unwrap()
+            };
 
             println!("Distances computed.");
-            Ok(())
+            Ok(result)
         }
         _ => Ok(()),
     }

@@ -4,7 +4,6 @@ use hashbrown::HashMap;
 use needletail::parse_fastx_file;
 use rayon::prelude::*;
 use std::error::Error;
-
 use crate::hasher::Xxh3Builder;
 
 use std::fs::File;
@@ -47,14 +46,17 @@ pub fn mask_bits(v: u64, k: usize) -> u64 {
     }
 }
 
-
 // distances
-pub fn hmh_distance(
+pub fn hmh_distance<F>(
     reference_names: Vec<String>,
     ref_sketch_file: String,
     query_names: Vec<String>,
     query_sketch_file: String,
-) -> Result<Vec<(String, String, f64)>, Box<dyn Error>> {
+    create_matrix: bool,
+    mut emit: F,
+) -> std::io::Result<()>
+where F: FnMut(&String, &String, f64) -> std::io::Result<()>,
+{
     fn read_sketches(file_name: &str, names: &Vec<String>) -> std::io::Result<Vec<Sketch>> {
         let file = File::open(file_name).expect(&format!("Error opening {}", file_name));
         let reader = BufReader::new(file);
@@ -89,49 +91,57 @@ pub fn hmh_distance(
         index += 1;
     }
 
-    // Cartesian product of (reference, query)
-    let pairs: Vec<(&String, &Sketch, &String, &Sketch)> = reference_sketches
-        .iter()
-        .flat_map(|(r_name, r_sketch)| {
-            query_sketches
-                .iter()
-                .map(move |(q_name, q_sketch)| (*r_name, *r_sketch, *q_name, *q_sketch))
-        })
-        .collect();
+    if create_matrix {
+        for q_name in query_sketches.keys() {
+            // empty r_name string signals printing columns
+            emit(&"".to_string(), q_name, 1.0)?;
+        }
+    }
 
-    let results: Vec<(String, String, f64)> = pairs
-        .par_iter()
-        .map(
-            |&(reference_name, reference_sketch, query_name, query_sketch)| {
-                let similarity = query_sketch.similarity(reference_sketch).max(0.0);
- 
-                // for debugging
-                info!(
-                    "Union: {}, a: {}, b: {}",
-                    reference_sketch.clone().union(query_sketch).cardinality(),
-                    reference_sketch.cardinality(),
-                    query_sketch.cardinality()
-                );
+    // loop through reference sketches (i)
+    for ref_name in reference_sketches.keys() {
+        let ref_sketch = reference_sketches[ref_name];
 
-                let numerator = 2.0 * similarity;
-                let denominator = 1.0 + similarity;
-                let fraction = numerator / denominator;
-                // let distance = 1.0f64 - fraction.powf(1.0 / kmer_length as f64);
+        // if creating matrix, emit the new file row
+        if create_matrix {
+            emit(ref_name, &"".to_string(), 1.0)?;
+        }
 
-                (reference_name.clone(), query_name.clone(), fraction)
-            },
-        )
-        .collect();
-    Ok(results)
+        // loop through query sketches (j)
+        for q_name in query_sketches.keys() {
+            let q_sketch = query_sketches[q_name];
+
+            // calculate distance (i, j, d)
+            let similarity = q_sketch.similarity(ref_sketch).max(0.0);
+            let numerator = 2.0 * similarity;
+            let denominator = 1.0 + similarity;
+            let fraction = numerator / denominator;
+
+            info!(
+                "Union: {}, a: {}, b: {}",
+                ref_sketch.clone().union(q_sketch).cardinality(),
+                ref_sketch.cardinality(),
+                q_sketch.cardinality()
+            );
+            emit(ref_name, q_name, fraction)?;
+        }
+    }
+
+    Ok(())
+    
 }
 
-pub fn ull_distance(
+pub fn ull_distance <F>(
     reference_names: Vec<String>,
     ref_sketch_file: String,
     query_names: Vec<String>,
     query_sketch_file: String,
     estimator: String,
-) -> Result<Vec<(String, String, f64)>, Box<dyn Error>> {
+    create_matrix: bool,
+    mut emit: F,
+)-> std::io::Result<()>
+where F: FnMut(&String, &String, f64) -> std::io::Result<()> {
+
     let ref_sketch_file = File::open(ref_sketch_file).expect("Failed to open file");
     let query_sketch_file = File::open(query_sketch_file).expect("Failed to open file");
 
@@ -162,17 +172,27 @@ pub fn ull_distance(
     let query_map =
         create_ull_map(query_sketch_file, &query_names, &estimator).unwrap();
 
-    let pairs: Vec<(&str, &str)> = ref_map
-        .keys()
-        .flat_map(|k1| query_map.keys().map(move |k2| (k1.as_str(), k2.as_str())))
-        .collect();
+    // print columns for matrix
+    if create_matrix {
+        for q_name in query_map.keys() {
+            // empty r_name string signals printing columns
+            emit(&"".to_string(), q_name, 1.0)?;
+        }
+    }
 
-    let results: Vec<(String, String, f64)> = pairs
-        .par_iter()
-        .map(|&(ref_name, qry_name)| {
-            let a: f64 = ref_map[ref_name].1;
+    for ref_name in ref_map.keys() {
+
+        // print ref name on the new line and on the left if matrix
+        let a: f64 = ref_map[ref_name].1;
+
+        // if creating matrix, emit the new file row
+        if create_matrix {
+            emit(ref_name, &"".to_string(), 1.0)?;
+        }
+
+        // loop through query sketches (j)
+        for qry_name in query_map.keys() {
             let b: f64 = query_map[qry_name].1;
-
             let union_ull =
                 UltraLogLog::merge(&ref_map[ref_name].0, &query_map[qry_name].0)
                     .expect("failed to merge sketches");
@@ -191,18 +211,54 @@ pub fn ull_distance(
             let frac = 2.0 * s / (1.0 + s);
             // let distance = 1.0f64 - frac.powf(1.0 / kmer_length as f64);
 
-            (ref_name.to_string(), qry_name.to_string(), frac)
-        })
-        .collect();
-    Ok(results)
+            emit(ref_name, qry_name, frac)?;
+        }
+    }
+    Ok(())
+    // let pairs: Vec<(&str, &str)> = ref_map
+    //     .keys()
+    //     .flat_map(|k1| query_map.keys().map(move |k2| (k1.as_str(), k2.as_str())))
+    //     .collect();
+
+    // let results: Vec<(String, String, f64)> = pairs
+    //     .par_iter()
+    //     .map(|&(ref_name, qry_name)| {
+    //         let a: f64 = ref_map[ref_name].1;
+    //         let b: f64 = query_map[qry_name].1;
+
+    //         let union_ull =
+    //             UltraLogLog::merge(&ref_map[ref_name].0, &query_map[qry_name].0)
+    //                 .expect("failed to merge sketches");
+
+    //         //let union_count = union_ull.get_distinct_count_estimate();
+    //         let union_count: f64 = match estimator.as_str() {
+    //             "fgra" => union_ull.get_distinct_count_estimate(),
+    //             "ml" => MaximumLikelihoodEstimator.estimate(&union_ull),
+    //             _ => panic!("estimator needs to be either fgra or ml"),
+    //         };
+
+    //         info!("Union: {}, a: {}, b: {}", union_count, a, b);
+
+    //         let similarity = (a + b - union_count) / union_count;
+    //         let s = if similarity < 0.0 { 0.0 } else { similarity };
+    //         let frac = 2.0 * s / (1.0 + s);
+    //         // let distance = 1.0f64 - frac.powf(1.0 / kmer_length as f64);
+
+    //         (ref_name.to_string(), qry_name.to_string(), frac)
+    //     })
+    //     .collect();
+    // Ok(results)
 }
 
-pub fn hll_distance(
+pub fn hll_distance<F>(
     reference_names: Vec<String>,
     ref_sketch_file: String,
     query_names: Vec<String>,
     query_sketch_file: String,
-) -> Result<Vec<(String, String, f64)>, Box<dyn Error>> {
+    create_matrix: bool,
+    mut emit: F,
+) -> std::io::Result<()>
+where F: FnMut(&String, &String, f64) -> std::io::Result<()> {
     let ref_sketch_file = File::open(ref_sketch_file).expect("Failed to open file");
     let query_sketch_file = File::open(query_sketch_file).expect("Failed to open file");
 
@@ -227,19 +283,28 @@ pub fn hll_distance(
     let ref_map = create_ull_map(ref_sketch_file, &reference_names).unwrap();
     let query_map = create_ull_map(query_sketch_file, &query_names).unwrap();
 
-    // all pairs
-    let pairs: Vec<(&str, &str)> = ref_map
-        .keys()
-        .flat_map(|k1| query_map.keys().map(move |k2| (k1.as_str(), k2.as_str())))
-        .collect();
+    if create_matrix {
+        for q_name in query_map.keys() {
+            // empty r_name string signals printing columns
+            emit(&"".to_string(), q_name, 1.0)?;
+        }
+    }
 
-    let results = pairs
-        .par_iter()
-        .map(|&(reference_name, query_name)| {
-            let a: f64 = ref_map[reference_name].1; // reference cardinality
-            let b: f64 = query_map[query_name].1; // query cardinality
-            let mut ref_hll = ref_map[reference_name].0.clone();
-            let q_hll = &query_map[query_name].0;
+    for ref_name in ref_map.keys() {
+        let a: f64 = ref_map[ref_name].1;
+
+        // if creating matrix, emit the new file row
+        if create_matrix {
+            emit(ref_name, &"".to_string(), 1.0)?;
+        }
+
+        // loop through query sketches (j)
+        for qry_name in query_map.keys() {
+
+             // reference cardinality
+            let b: f64 = query_map[qry_name].1; // query cardinality
+            let mut ref_hll = ref_map[ref_name].0.clone();
+            let q_hll = &query_map[qry_name].0;
             ref_hll.union(q_hll);
             let union_count = ref_hll.len();
 
@@ -252,11 +317,39 @@ pub fn hll_distance(
             // let distance: f64 = -fraction.ln() / (kmer_length as f64);
             let frac = 2.0 * s / (1.0 + s);
             // let distance = 1.0f64 - frac.powf(1.0 / kmer_length as f64);
-            (reference_name.to_string(), query_name.to_string(), frac)
-        })
-        .collect();
+            emit(ref_name, qry_name, frac)?;
+        }
+    }
+    
+    Ok(())
+    // all pairs
+    // let pairs: Vec<(&str, &str)> = ref_map
+    //     .keys()
+    //     .flat_map(|k1| query_map.keys().map(move |k2| (k1.as_str(), k2.as_str())))
+    //     .collect();
 
-    Ok(results)
+    // let results = pairs
+    //     .par_iter()
+    //     .map(|&(reference_name, query_name)| {
+    //         let a: f64 = ref_map[reference_name].1; // reference cardinality
+    //         let b: f64 = query_map[query_name].1; // query cardinality
+    //         let mut ref_hll = ref_map[reference_name].0.clone();
+    //         let q_hll = &query_map[query_name].0;
+    //         ref_hll.union(q_hll);
+    //         let union_count = ref_hll.len();
+
+    //         info!("Union: {}, a: {}, b: {}", union_count, a, b);
+
+    //         let s = ((a + b - union_count) / union_count).max(0.0);
+    //         // let numerator: f64 = 2.0 * s;
+    //         // let denominator: f64 = 1.0 + s;
+    //         // let fraction: f64 = numerator / denominator;
+    //         // let distance: f64 = -fraction.ln() / (kmer_length as f64);
+    //         let frac = 2.0 * s / (1.0 + s);
+    //         // let distance = 1.0f64 - frac.powf(1.0 / kmer_length as f64);
+    //         (reference_name.to_string(), query_name.to_string(), frac)
+    //     })
+    //     .collect();
 }
 
 // Each file is processed to completion in its own task (no inner parallelism / no channels).
