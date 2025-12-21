@@ -13,7 +13,7 @@ use serde_json::json;
 mod utils;
 use crate::utils::{hll_distance, hll_sketch, hmh_distance, hmh_sketch, ull_sketch, ull_distance};
 use num_traits::Float;
-
+use std::sync::Mutex;
 pub enum Matrix {
     F32(Vec<Vec<f32>>),
     F64(Vec<Vec<f64>>),
@@ -416,12 +416,13 @@ fn main() -> Result<(), Box<dyn Error>> {
             //     }
             // }
 
-            let mut output = File::create(output_file)?; // don't append ".txt"
+            let output = Mutex::new(File::create(output_file)?); // don't append ".txt"
             let equation = *s_matches.get_one::<u64>("model").expect("required");
             let fp32 = s_matches.get_flag("fp32");
 
             if !create_matrix {
-                writeln!(output, "Reference\tQuery\tDistance")?;
+                let mut file = output.lock().unwrap();
+                writeln!(file, "Reference\tQuery\tDistance")?;
             }
             
             // function to compute distance from fraction
@@ -443,69 +444,52 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             
-
-            // for knowing when to use "-" in matrix
-            let same_files = ref_namefile == query_namefile;
-            let mut row = 0;
-            let mut col = 0;
-
             // callback and emit function
-            let print_list = | r_name: &String, q_name: &String, frac: f64| {
-
-                // empty r_name means printing matrix column names (q_name)
-                if r_name == "" {
-                    write!(output, "\t{}", q_name)?;
+            let print_list = | distance_list: Vec<(&String, &String, f64)>| {
+                // printing columns for matrix output
+                let mut file = output.lock().unwrap();
+                if create_matrix && distance_list[0].0 == "" {
+                    for col in distance_list.iter() {
+                        write!(file, "\t{}", col.1).expect("Error writing columns for matrix output");
+                    }
                 }
-                // empty q_name means printing a new row (r_name) for matrix
-                else if q_name == "" { 
-                    writeln!(output, "")?;
-                    write!(output, "{}", r_name)?;
-                    col = 0;
-                    row += 1;
-                }
-
-                // print a distance value
                 else {
                     // for float32 output
                     if fp32 {
-                        let d: f32 = if q_name == r_name {
-                            0.0
-                        } else {
-                            compute_distance::<f32>(frac, kmer_length, equation as u8)
-                        };
-
-                        if !create_matrix {
-                            writeln!(output, "{}\t{}\t{:.6}", r_name, q_name, d).expect("Error writing to file");
-                        }
-                        else {
-                            col += 1;
-                            if row > col && same_files {
-                                write!(output, "\t-").expect("Error writing to file"); // redundant distance
-                            } else {
-                                write!(output, "\t{:.6}", d).expect("Error writing to file");
+                        for (i, row) in distance_list.iter().enumerate() {
+                            let r_name = row.0;
+                            let q_name = row.1;
+                            let d: f32 = if q_name == r_name {
+                                0.0
+                            } else { compute_distance::<f32>(row.2, kmer_length, equation as u8) };
+        
+                            if !create_matrix {
+                                writeln!(file, "{}\t{}\t{:.6}", r_name, q_name, d).expect("Error writing to file");
+                            }
+                            else {
+                                if i == 0 { write!(file, "\n{}", r_name).expect("Error writing to file"); }
+                                write!(file, "\t{:.6}", d).expect("Error writing to file");                            
                             }
                         }
                     } else { // for float64 (default) output
-                        let d: f64 = if q_name == r_name {
-                            0.0
-                        } else {
-                            compute_distance::<f64>(frac, kmer_length, equation as u8)
-                        };
-
-                        if !create_matrix {
-                            writeln!(output, "{}\t{}\t{:.6}", r_name, q_name, d).expect("Error writing to file");
-                        }
-                        else {
-                            col += 1;
-                            if row > col && same_files {
-                                write!(output, "\t-").expect("Error writing to file"); // redundant distance
-                            } else {
-                                write!(output, "\t{:.6}", d).expect("Error writing to file");
+                        for (i, row) in distance_list.iter().enumerate() {
+                            let r_name = row.0;
+                            let q_name = row.1;
+                            let d: f64 = if q_name == r_name {
+                                0.0
+                            } else { compute_distance::<f64>(row.2, kmer_length, equation as u8) };
+        
+                            if !create_matrix {
+                                writeln!(file, "{}\t{}\t{:.6}", r_name, q_name, d).expect("Error writing to file");
+                            }
+                            else {
+                                if i == 0 { write!(file, "\n{}", r_name).expect("Error writing to file"); }
+                                write!(file, "\t{:.6}", d).expect("Error writing to file");
                             }
                         }
                     }
                 }
-                Ok(())
+                //Ok(())
             };
 
             // let mut results: Vec<(String, String, f64)> = Vec::new();
