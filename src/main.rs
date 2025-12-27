@@ -392,19 +392,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             
             // function to compute distance from fraction
             fn compute_distance<F: Float>(frac: f64, kmer_length: usize, equation: u8) -> F {
+                let frac_f = F::from(frac).unwrap();
+                let k = F::from(kmer_length).unwrap();
+
                 match equation {
-                    1 => {
-                        // -ln(frac)/kmer_length, clamped to 1.0
-                        let frac_f = F::from(frac).unwrap();
-                        let k = F::from(kmer_length).unwrap();
-                        (-frac_f.ln() / k).min(F::one())
-                    }
-                    0 => {
-                        // 1 - frac^(1/kmer_length)
-                        let frac_f = F::from(frac).unwrap();
-                        let k = F::from(kmer_length).unwrap();
-                        F::one() - frac_f.powf(F::one() / k)
-                    }
+                    1 => (-frac_f.ln() / k).min(F::one()),
+                    0 => F::one() - frac_f.powf(F::one() / k),
                     _ => panic!("model needs to be 0 or 1"),
                 }
             }
