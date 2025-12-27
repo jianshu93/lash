@@ -53,6 +53,7 @@ pub fn hmh_distance<F>(
     query_names: Vec<String>,
     query_sketch_file: String,
     create_matrix: bool,
+    same_files: bool,
     emit: F,
 ) -> std::io::Result<()>
 where F: Fn(Vec<(&String, &String, f64)>) + Send + Sync
@@ -92,14 +93,23 @@ where F: Fn(Vec<(&String, &String, f64)>) + Send + Sync
     }
 
     // send column names if printing matrix
-    if create_matrix {
+    let mut file_idx: HashMap<&String, usize> = HashMap::new();
+    
+    if same_files | create_matrix {
         let mut columns: Vec<(&String, &String, f64)> = Vec::new();
         let blank_str = &"".to_string();
-        for q_name in query_sketches.keys() {
+        for (i, q_name) in query_sketches.keys().enumerate() {
             // empty r_name string signals printing columns
-            columns.push((blank_str, q_name, 1.0));
+            if create_matrix {
+                columns.push((blank_str, q_name, 1.0));
+            }
+            if same_files {
+                file_idx.insert(q_name, i);
+            }
         }
-        emit(columns);
+        if create_matrix {
+            emit(columns);
+        }
     }
 
     // loop through reference sketches (i)
@@ -109,6 +119,11 @@ where F: Fn(Vec<(&String, &String, f64)>) + Send + Sync
 
         // loop through query sketches (j)
         for q_name in query_sketches.keys() {
+
+            // for triangular matrix purposes
+            if same_files && file_idx[q_name] > file_idx[ref_name] {
+                continue;
+            }
             let q_sketch = query_sketches[q_name];
 
             // calculate distance (i, j, d)
@@ -139,6 +154,7 @@ pub fn ull_distance <F>(
     query_sketch_file: String,
     estimator: String,
     create_matrix: bool,
+    same_files: bool,
     emit: F,
 )-> std::io::Result<()>
 where 
@@ -174,14 +190,23 @@ F: Fn(Vec<(&String, &String, f64)>) + Send + Sync {
     let query_map =
         create_ull_map(query_sketch_file, &query_names, &estimator).unwrap();
 
-    if create_matrix {
+    let mut file_idx: HashMap<&String, usize> = HashMap::new();
+    if same_files | create_matrix {
         let mut columns: Vec<(&String, &String, f64)> = Vec::new();
         let blank = "".to_string();
-        for q_name in query_map.keys() {
+        for (i, q_name) in query_map.keys().enumerate() {
             // empty r_name string signals printing columns
-            columns.push((&blank, q_name, 1.0));
+            if create_matrix {
+                columns.push((&blank, q_name, 1.0));
+            }
+            // used for redundant distances
+            if same_files {
+                file_idx.insert(q_name, i);
+            }
         }
-        emit(columns);
+        if create_matrix {
+            emit(columns);
+        }
     }
 
     ref_map.par_iter().for_each(|(ref_name, _)| {
@@ -191,6 +216,10 @@ F: Fn(Vec<(&String, &String, f64)>) + Send + Sync {
         let mut ref_list: Vec<(&String, &String, f64)> = Vec::new();
         // loop through query sketches (j)
         for qry_name in query_map.keys() {
+            // for redundant distances
+            if same_files && file_idx[qry_name] > file_idx[ref_name] {
+                continue;
+            }
             let b: f64 = query_map[qry_name].1;
             let union_ull =
                 UltraLogLog::merge(&ref_map[ref_name].0, &query_map[qry_name].0)
@@ -226,6 +255,7 @@ pub fn hll_distance<F>(
     query_names: Vec<String>,
     query_sketch_file: String,
     create_matrix: bool,
+    same_files: bool,
     emit: F,
 ) -> std::io::Result<()>
 where F: Fn(Vec<(&String, &String, f64)>) + Send + Sync {
@@ -253,14 +283,22 @@ where F: Fn(Vec<(&String, &String, f64)>) + Send + Sync {
     let ref_map = create_ull_map(ref_sketch_file, &reference_names).unwrap();
     let query_map = create_ull_map(query_sketch_file, &query_names).unwrap();
 
-    if create_matrix {
+    let mut file_idx: HashMap<&String, usize> = HashMap::new();
+    if same_files | create_matrix {
         let mut columns: Vec<(&String, &String, f64)> = Vec::new();
         let blank = &"".to_string();
-        for q_name in query_map.keys() {
+        for (i, q_name) in query_map.keys().enumerate() {
             // empty r_name string signals printing columns
-            columns.push((blank, q_name, 1.0));
+            if create_matrix {
+                columns.push((blank, q_name, 1.0));
+            }
+            if same_files {
+                file_idx.insert(q_name, i);
+            }
         }
-        emit(columns);
+        if create_matrix {
+            emit(columns);
+        }
     }
 
     ref_map.par_iter().for_each(|(ref_name, _) | {
@@ -270,6 +308,10 @@ where F: Fn(Vec<(&String, &String, f64)>) + Send + Sync {
         // loop through query sketches (j)
         for qry_name in query_map.keys() {
 
+            // for triangular matrix
+            if same_files && file_idx[qry_name] > file_idx[ref_name] {
+                continue;
+            }
              // reference cardinality
             let b: f64 = query_map[qry_name].1; // query cardinality
             let mut ref_hll = ref_map[ref_name].0.clone();

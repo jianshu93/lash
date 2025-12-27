@@ -13,20 +13,7 @@ use serde_json::json;
 mod utils;
 use crate::utils::{hll_distance, hll_sketch, hmh_distance, hmh_sketch, ull_sketch, ull_distance};
 use num_traits::Float;
-use std::sync::Mutex;
-pub enum Matrix {
-    F32(Vec<Vec<f32>>),
-    F64(Vec<Vec<f64>>),
-}
-
-impl Matrix {
-    pub fn set<F: Float>(&mut self, i: usize, j: usize, value: F) {
-        match self {
-            Matrix::F32(m) => m[i][j] = F::to_f32(&value).unwrap(),
-            Matrix::F64(m) => m[i][j] = F::to_f64(&value).unwrap(),
-        }
-    }
-}
+use std::sync::{Arc, Mutex};
 
 fn main() -> Result<(), Box<dyn Error>> {
     // Initialize logger
@@ -393,29 +380,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .expect(&format!("Error with reading from {}", ref_namefile));
 
             let create_matrix = s_matches.get_flag("dm");
-
-            // let mut matrix = if fp32 {
-            //     Matrix::F32(Vec::new())
-            // } else {
-            //     Matrix::F64(Vec::new())
-            // };
-            // let mut query_idx = HashMap::new();
-            // let mut ref_idx = HashMap::new();
-            
-            // if create_matrix {
-            //     if fp32 {
-            //         matrix = Matrix::F32(vec![vec![0.0f32; reference_names.len()]; query_names.len()]);
-            //     } else {
-            //         matrix = Matrix::F64(vec![vec![0.0f64; reference_names.len()]; query_names.len()]);
-            //     }
-            //     for (i, name) in query_names.iter().enumerate() {
-            //         query_idx.insert(name.clone(), i);
-            //     }
-            //     for (i, name) in reference_names.iter().enumerate() {
-            //         ref_idx.insert(name.clone(), i);
-            //     }
-            // }
-
+            let same_files = query_namefile == ref_namefile;
             let output = Mutex::new(File::create(output_file)?); // don't append ".txt"
             let equation = *s_matches.get_one::<u64>("model").expect("required");
             let fp32 = s_matches.get_flag("fp32");
@@ -443,14 +408,22 @@ fn main() -> Result<(), Box<dyn Error>> {
                     _ => panic!("model needs to be 0 or 1"),
                 }
             }
-            
+
+            // for triangular matrix printing 
+            let file_idx = Arc::new(Mutex::new(HashMap::<String, usize>::new()));
+
             // callback and emit function
             let print_list = | distance_list: Vec<(&String, &String, f64)>| {
-                // printing columns for matrix output
+                // printing columns for matrix output using the query list
                 let mut file = output.lock().unwrap();
                 if create_matrix && distance_list[0].0 == "" {
-                    for col in distance_list.iter() {
+                    
+                    for (i, col) in distance_list.iter().enumerate() {
                         write!(file, "\t{}", col.1).expect("Error writing columns for matrix output");
+                        if same_files {
+                            let mut idx = file_idx.lock().unwrap();
+                            idx.insert(col.1.clone(), i);
+                        }
                     }
                 }
                 else {
@@ -468,7 +441,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                             }
                             else {
                                 if i == 0 { write!(file, "\n{}", r_name).expect("Error writing to file"); }
-                                write!(file, "\t{:.6}", d).expect("Error writing to file");                            
+                                write!(file, "\t{:.6}", d).expect("Error writing to file");            
+                                                                        
                             }
                         }
                     } else { // for float64 (default) output
@@ -484,7 +458,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             }
                             else {
                                 if i == 0 { write!(file, "\n{}", r_name).expect("Error writing to file"); }
-                                write!(file, "\t{:.6}", d).expect("Error writing to file");
+                                write!(file, "\t{:.6}", d).expect("Error writing to file");            
                             }
                         }
                     }
@@ -501,6 +475,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     query_names,
                     query_sketch_file_name,
                     create_matrix,
+                    same_files,
                     print_list
                 )
                 .unwrap()
@@ -518,6 +493,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     query_sketch_file_name,
                     estimator, 
                     create_matrix,
+                    same_files,
                     print_list
                 ).unwrap()
             } else {
@@ -528,6 +504,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     query_names,
                     query_sketch_file_name,
                     create_matrix,
+                    same_files,
                     print_list
                 ).unwrap()
             };
