@@ -95,7 +95,7 @@ where F: Fn(Vec<(&String, &String, f64)>) + Send + Sync
     // send column names if printing matrix
     let mut file_idx: HashMap<&String, usize> = HashMap::new();
     
-    if same_files | create_matrix {
+    if same_files || create_matrix {
         let mut columns: Vec<(&String, &String, f64)> = Vec::new();
         let blank_str = &"".to_string();
         for (i, q_name) in query_sketches.keys().enumerate() {
@@ -191,7 +191,7 @@ F: Fn(Vec<(&String, &String, f64)>) + Send + Sync {
         create_ull_map(query_sketch_file, &query_names, &estimator).unwrap();
 
     let mut file_idx: HashMap<&String, usize> = HashMap::new();
-    if same_files | create_matrix {
+    if same_files || create_matrix {
         let mut columns: Vec<(&String, &String, f64)> = Vec::new();
         let blank = "".to_string();
         for (i, q_name) in query_map.keys().enumerate() {
@@ -284,7 +284,7 @@ where F: Fn(Vec<(&String, &String, f64)>) + Send + Sync {
     let query_map = create_ull_map(query_sketch_file, &query_names).unwrap();
 
     let mut file_idx: HashMap<&String, usize> = HashMap::new();
-    if same_files | create_matrix {
+    if same_files || create_matrix {
         let mut columns: Vec<(&String, &String, f64)> = Vec::new();
         let blank = &"".to_string();
         for (i, q_name) in query_map.keys().enumerate() {
