@@ -5,7 +5,7 @@ use needletail::parse_fastx_file;
 use rayon::prelude::*;
 use std::error::Error;
 use crate::hasher::Xxh3Builder;
-
+use num_traits::{Float};
 use std::fs::File;
 use std::io::{BufReader, BufWriter};
 
@@ -47,7 +47,7 @@ pub fn mask_bits(v: u64, k: usize) -> u64 {
 }
 
 // distances
-pub fn hmh_distance<F>(
+pub fn hmh_distance<F, T: Float>(
     reference_names: Vec<String>,
     ref_sketch_file: String,
     query_names: Vec<String>,
@@ -56,7 +56,7 @@ pub fn hmh_distance<F>(
     same_files: bool,
     emit: F,
 ) -> std::io::Result<()>
-where F: Fn(Vec<(&String, &String, f64)>) + Send + Sync
+where F: Fn(Vec<(&String, &String, T)>) + Send + Sync
 {
     fn read_sketches(file_name: &str, names: &Vec<String>) -> std::io::Result<Vec<Sketch>> {
         let file = File::open(file_name).expect(&format!("Error opening {}", file_name));
@@ -96,12 +96,12 @@ where F: Fn(Vec<(&String, &String, f64)>) + Send + Sync
     let mut file_idx: HashMap<&String, usize> = HashMap::new();
     
     if same_files || create_matrix {
-        let mut columns: Vec<(&String, &String, f64)> = Vec::new();
+        let mut columns: Vec<(&String, &String, T)> = Vec::new();
         let blank_str = &"".to_string();
         for (i, q_name) in query_sketches.keys().enumerate() {
             // empty r_name string signals printing columns
             if create_matrix {
-                columns.push((blank_str, q_name, 1.0));
+                columns.push((blank_str, q_name, T::one()));
             }
             if same_files {
                 file_idx.insert(q_name, i);
@@ -115,7 +115,7 @@ where F: Fn(Vec<(&String, &String, f64)>) + Send + Sync
     // loop through reference sketches (i)
     reference_sketches.par_iter().for_each(|(ref_name, _)| {
         let ref_sketch = reference_sketches[ref_name];
-        let mut ref_row: Vec<(&String, &String, f64)> = Vec::new();
+        let mut ref_row: Vec<(&String, &String, T)> = Vec::new();
 
         // loop through query sketches (j)
         for q_name in query_sketches.keys() {
@@ -138,7 +138,9 @@ where F: Fn(Vec<(&String, &String, f64)>) + Send + Sync
                 ref_sketch.cardinality(),
                 q_sketch.cardinality()
             );
-            ref_row.push((ref_name, q_name, fraction));
+
+            let frac_t: T = T::from(fraction).expect("failed to convert to f64 or f32");
+            ref_row.push((ref_name, q_name, frac_t));
         }
         emit(ref_row);
     });
@@ -147,7 +149,7 @@ where F: Fn(Vec<(&String, &String, f64)>) + Send + Sync
     
 }
 
-pub fn ull_distance <F>(
+pub fn ull_distance <F, T: Float>(
     reference_names: Vec<String>,
     ref_sketch_file: String,
     query_names: Vec<String>,
@@ -158,7 +160,7 @@ pub fn ull_distance <F>(
     emit: F,
 )-> std::io::Result<()>
 where 
-F: Fn(Vec<(&String, &String, f64)>) + Send + Sync {
+F: Fn(Vec<(&String, &String, T)>) + Send + Sync {
 
     let ref_sketch_file = File::open(ref_sketch_file).expect("Failed to open file");
     let query_sketch_file = File::open(query_sketch_file).expect("Failed to open file");
@@ -192,12 +194,12 @@ F: Fn(Vec<(&String, &String, f64)>) + Send + Sync {
 
     let mut file_idx: HashMap<&String, usize> = HashMap::new();
     if same_files || create_matrix {
-        let mut columns: Vec<(&String, &String, f64)> = Vec::new();
+        let mut columns: Vec<(&String, &String, T)> = Vec::new();
         let blank = "".to_string();
         for (i, q_name) in query_map.keys().enumerate() {
             // empty r_name string signals printing columns
             if create_matrix {
-                columns.push((&blank, q_name, 1.0));
+                columns.push((&blank, q_name, T::one()));
             }
             // used for redundant distances
             if same_files {
@@ -213,7 +215,7 @@ F: Fn(Vec<(&String, &String, f64)>) + Send + Sync {
         // print ref name on the new line and on the left if matrix
         let a: f64 = ref_map[ref_name].1;
 
-        let mut ref_list: Vec<(&String, &String, f64)> = Vec::new();
+        let mut ref_list: Vec<(&String, &String, T)> = Vec::new();
         // loop through query sketches (j)
         for qry_name in query_map.keys() {
             // for redundant distances
@@ -236,10 +238,12 @@ F: Fn(Vec<(&String, &String, f64)>) + Send + Sync {
 
             let similarity = (a + b - union_count) / union_count;
             let s = if similarity < 0.0 { 0.0 } else { similarity };
-            let frac = 2.0 * s / (1.0 + s);
-            // let distance = 1.0f64 - frac.powf(1.0 / kmer_length as f64);
+            let frac_f64 = 2.0 * s / (1.0 + s);
 
-            ref_list.push((ref_name, qry_name, frac));
+            let frac_t: T = T::from(frac_f64)
+                .expect("failed to convert f64 to T");
+
+            ref_list.push((ref_name, qry_name, frac_t));
         }
 
         // emit a vector with same ref file
@@ -249,7 +253,7 @@ F: Fn(Vec<(&String, &String, f64)>) + Send + Sync {
     Ok(())
 }
 
-pub fn hll_distance<F>(
+pub fn hll_distance<F, T: Float>(
     reference_names: Vec<String>,
     ref_sketch_file: String,
     query_names: Vec<String>,
@@ -258,7 +262,7 @@ pub fn hll_distance<F>(
     same_files: bool,
     emit: F,
 ) -> std::io::Result<()>
-where F: Fn(Vec<(&String, &String, f64)>) + Send + Sync {
+where F: Fn(Vec<(&String, &String, T)>) + Send + Sync {
     let ref_sketch_file = File::open(ref_sketch_file).expect("Failed to open file");
     let query_sketch_file = File::open(query_sketch_file).expect("Failed to open file");
 
@@ -285,12 +289,12 @@ where F: Fn(Vec<(&String, &String, f64)>) + Send + Sync {
 
     let mut file_idx: HashMap<&String, usize> = HashMap::new();
     if same_files || create_matrix {
-        let mut columns: Vec<(&String, &String, f64)> = Vec::new();
+        let mut columns: Vec<(&String, &String, T)> = Vec::new();
         let blank = &"".to_string();
         for (i, q_name) in query_map.keys().enumerate() {
             // empty r_name string signals printing columns
             if create_matrix {
-                columns.push((blank, q_name, 1.0));
+                columns.push((blank, q_name, T::one()));
             }
             if same_files {
                 file_idx.insert(q_name, i);
@@ -303,7 +307,7 @@ where F: Fn(Vec<(&String, &String, f64)>) + Send + Sync {
 
     ref_map.par_iter().for_each(|(ref_name, _) | {
         let a: f64 = ref_map[ref_name].1;
-        let mut row: Vec<(&String, &String, f64)> = Vec::new();
+        let mut row: Vec<(&String, &String, T)> = Vec::new();
 
         // loop through query sketches (j)
         for qry_name in query_map.keys() {
@@ -322,14 +326,11 @@ where F: Fn(Vec<(&String, &String, f64)>) + Send + Sync {
             info!("Union: {}, a: {}, b: {}", union_count, a, b);
 
             let s = ((a + b - union_count) / union_count).max(0.0);
-            // let numerator: f64 = 2.0 * s;
-            // let denominator: f64 = 1.0 + s;
-            // let fraction: f64 = numerator / denominator;
-            // let distance: f64 = -fraction.ln() / (kmer_length as f64);
             let frac = 2.0 * s / (1.0 + s);
+            let frac_t: T = T::from(frac).expect("failed to convert f64 to T");
             // let distance = 1.0f64 - frac.powf(1.0 / kmer_length as f64);
             
-            row.push((ref_name, qry_name, frac));
+            row.push((ref_name, qry_name, frac_t));
         }
         emit(row);
     });

@@ -173,7 +173,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let threads = s_matches
                 .get_one::<usize>("threads")
                 .copied()
-                .unwrap_or_else(|| num_cpus::get());
+                .unwrap_or_else(num_cpus::get);
 
             rayon::ThreadPoolBuilder::new()
                 .num_threads(threads.max(1))
@@ -185,7 +185,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let seed: u64 = *s_matches.get_one::<u64>("seed").expect("required");
 
             let files: Vec<String> = {
-                let f = File::open(&sketch_file_name)?;
+                let f = File::open(sketch_file_name)?;
                 BufReader::new(f)
                     .lines()
                     .filter_map(|l| l.ok())
@@ -234,20 +234,20 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
                 params = json!({
                     "k": kmer_length.to_string(),
-                    "algorithm": &alg,
+                    "algorithm": alg,
                     "precision": precision.to_string(),
                     "seed": seed.to_string()
                 });
             } else {
                 params = json!({
                     "k": kmer_length.to_string(),
-                    "algorithm": &alg,
+                    "algorithm": alg,
                     "seed": seed.to_string()
                 });
             }
 
             // writing out
-            File::create(format!("{}_parameters.json", &output_name))?
+            File::create(format!("{}_parameters.json", output_name))?
                 .write_all(serde_json::to_string_pretty(&params)?.as_bytes())?;
 
             result
@@ -256,7 +256,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let ref_prefix = s_matches.get_one::<String>("reference").expect("required");
             let query_prefix = s_matches.get_one::<String>("query").expect("required");
 
-            fn find_files(prefix: &String) -> std::io::Result<HashMap<&str, String>> {
+            fn find_files(prefix: &str) -> std::io::Result<HashMap<&'static str, String>> {
                 let mut files: Vec<String> = Vec::new();
                 let dir = "./"; // use curent directory
 
@@ -317,7 +317,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let threads = s_matches
                 .get_one::<usize>("threads")
                 .copied()
-                .unwrap_or_else(|| num_cpus::get());
+                .unwrap_or_else(num_cpus::get);
 
             rayon::ThreadPoolBuilder::new()
                 .num_threads(threads.max(1))
@@ -325,8 +325,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .unwrap();
 
             // go through the files needed, find name file, sketch file, and param file
-            let ref_files = find_files(ref_prefix).unwrap();
-            let query_files = find_files(query_prefix).unwrap();
+            let ref_files = find_files(ref_prefix)?;
+            let query_files = find_files(query_prefix)?;
             let ref_param_file = ref_files["params"].clone();
             let query_param_file = query_files["params"].clone();
 
@@ -334,12 +334,10 @@ fn main() -> Result<(), Box<dyn Error>> {
             // println!("{}", query_param_file);
 
             // read in parameter json files into hashmaps
-            let contents_ref = fs::read_to_string(ref_param_file).expect("Unable to read file");
-            let contents_query = fs::read_to_string(query_param_file).expect("Unable to read file");
-            let ref_map: HashMap<String, String> =
-                serde_json::from_str(&contents_ref).expect("Invalid JSON");
-            let query_map: HashMap<String, String> =
-                serde_json::from_str(&contents_query).expect("Invalid JSON");
+            let contents_ref = fs::read_to_string(ref_param_file)?;
+            let contents_query = fs::read_to_string(query_param_file)?;
+            let ref_map: HashMap<String, String> = serde_json::from_str(&contents_ref)?;
+            let query_map: HashMap<String, String> = serde_json::from_str(&contents_query)?;
 
             // check that parameters match between ref and query genomes
             if ref_map["k"] != query_map["k"] {
@@ -357,11 +355,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                 }
             }
             // assign kmer length once k matches
-            let kmer_length: usize = ref_map["k"].parse().expect("Not a valid usize");
+            let kmer_length: usize = ref_map["k"].parse()?;
 
             // function to read in names of the genomes, outputs a vector of names
             fn read_names(file_name: &str) -> std::io::Result<Vec<String>> {
-                let file = File::open(file_name).expect(&format!("Error opening {}", file_name));
+                let file = File::open(file_name)?;
                 let reader = BufReader::new(file);
                 let names: Vec<String> = serde_json::from_reader(reader)?;
                 Ok(names)
@@ -370,18 +368,16 @@ fn main() -> Result<(), Box<dyn Error>> {
             //create query sketch hashmap
             let query_namefile = query_files["files"].clone();
             let query_sketch_file_name = query_files["sketches"].clone();
-            let query_names: Vec<String> = read_names(&query_namefile)
-                .expect(&format!("Error with reading from {}", query_namefile));
+            let query_names: Vec<String> = read_names(&query_namefile)?;
 
             // create reference sketch hashmap
             let ref_namefile = ref_files["files"].clone();
             let ref_sketch_file_name = ref_files["sketches"].clone();
-            let reference_names: Vec<String> = read_names(&ref_namefile)
-                .expect(&format!("Error with reading from {}", ref_namefile));
+            let reference_names: Vec<String> = read_names(&ref_namefile)?;
 
             let create_matrix = s_matches.get_flag("dm");
             let same_files = query_namefile == ref_namefile;
-            let output = Mutex::new(File::create(output_file)?); // don't append ".txt"
+            let output = Arc::new(Mutex::new(File::create(output_file)?));
             let equation = *s_matches.get_one::<u64>("model").expect("required");
             let fp32 = s_matches.get_flag("fp32");
 
@@ -391,13 +387,12 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             
             // function to compute distance from fraction
-            fn compute_distance<F: Float>(frac: f64, kmer_length: usize, equation: u8) -> F {
-                let frac_f = F::from(frac).unwrap();
+            fn compute_distance<F: Float>(frac: F, kmer_length: usize, equation: u8) -> F {
                 let k = F::from(kmer_length).unwrap();
 
                 match equation {
-                    1 => (-frac_f.ln() / k).min(F::one()),
-                    0 => F::one() - frac_f.powf(F::one() / k),
+                    1 => (-frac.ln() / k).min(F::one()),
+                    0 => F::one() - frac.powf(F::one() / k),
                     _ => panic!("model needs to be 0 or 1"),
                 }
             }
@@ -406,11 +401,17 @@ fn main() -> Result<(), Box<dyn Error>> {
             let file_idx = Arc::new(Mutex::new(HashMap::<String, usize>::new()));
 
             // callback and emit function
-            let print_list = | distance_list: Vec<(&String, &String, f64)>| {
+            fn print_dist<T: Float + std::fmt::Display>(
+                distance_list: Vec<(&String, &String, T)>, 
+                output: &Arc<Mutex<File>>, 
+                create_matrix: bool, 
+                same_files: bool, 
+                file_idx: &Arc<Mutex<HashMap<String, usize>>>, 
+                kmer_length: usize, 
+                equation: u64) {
                 // printing columns for matrix output using the query list
                 let mut file = output.lock().unwrap();
-                if create_matrix && distance_list[0].0 == "" {
-                    
+                if create_matrix && !distance_list.is_empty() && distance_list[0].0.is_empty() {
                     for (i, col) in distance_list.iter().enumerate() {
                         write!(file, "\t{}", col.1).expect("Error writing columns for matrix output");
                         if same_files {
@@ -420,86 +421,170 @@ fn main() -> Result<(), Box<dyn Error>> {
                     }
                 }
                 else {
-                    // for float32 output
-                    if fp32 {
-                        for (i, row) in distance_list.iter().enumerate() {
-                            let r_name = row.0;
-                            let q_name = row.1;
-                            let d: f32 = if q_name == r_name {
-                                0.0
-                            } else { compute_distance::<f32>(row.2, kmer_length, equation as u8) };
-        
-                            if !create_matrix {
-                                writeln!(file, "{}\t{}\t{:.6}", r_name, q_name, d).expect("Error writing to file");
+                    for (i, row) in distance_list.iter().enumerate() {
+                        let r_name = row.0;
+                        let q_name = row.1;
+                        let d: T = if q_name == r_name {
+                            T::zero()
+                        } else {
+                            compute_distance::<T>(row.2, kmer_length, equation as u8)
+                        };
+                        
+                        if !create_matrix {
+                            writeln!(file, "{}\t{}\t{:.6}", r_name, q_name, d)
+                                .expect("Error writing to file");
+                        } else {
+                            if i == 0 { 
+                                write!(file, "\n{}", r_name).expect("Error writing to file"); 
                             }
-                            else {
-                                if i == 0 { write!(file, "\n{}", r_name).expect("Error writing to file"); }
-                                write!(file, "\t{:.6}", d).expect("Error writing to file");            
-                                                                        
-                            }
+                            write!(file, "\t{:.6}", d).expect("Error writing to file");            
                         }
-                    } else { // for float64 (default) output
-                        for (i, row) in distance_list.iter().enumerate() {
-                            let r_name = row.0;
-                            let q_name = row.1;
-                            let d: f64 = if q_name == r_name {
-                                0.0
-                            } else { compute_distance::<f64>(row.2, kmer_length, equation as u8) };
-        
-                            if !create_matrix {
-                                writeln!(file, "{}\t{}\t{:.6}", r_name, q_name, d).expect("Error writing to file");
-                            }
-                            else {
-                                if i == 0 { write!(file, "\n{}", r_name).expect("Error writing to file"); }
-                                write!(file, "\t{:.6}", d).expect("Error writing to file");            
-                            }
-                        }
+                    
                     }
                 }
                 //Ok(())
-            };
+            }
 
-            // let mut results: Vec<(String, String, f64)> = Vec::new();
-            // compute all pairwise distances into a single results Vec
+            // for each algorithm, use a different generic depending on if user wants F32 or F64
             let result = if ref_map["algorithm"] == "hmh" {
-                hmh_distance(
-                    reference_names,
-                    ref_sketch_file_name,
-                    query_names,
-                    query_sketch_file_name,
-                    create_matrix,
-                    same_files,
-                    print_list
-                )
-                .unwrap()
+                if fp32 {
+                    let emit = move |rows: Vec<(&String, &String, f32)>| {
+                        print_dist(
+                            rows, 
+                            &output, 
+                            create_matrix, 
+                            same_files, 
+                            &file_idx, 
+                            kmer_length, 
+                            equation
+                        );
+                    };
+                    hmh_distance::<_, f32>(
+                        reference_names,
+                        ref_sketch_file_name,
+                        query_names,
+                        query_sketch_file_name,
+                        create_matrix,
+                        same_files,
+                        emit,
+                    )?
+                } else {
+                    let emit = move |rows: Vec<(&String, &String, f64)>| {
+                        print_dist(
+                            rows, 
+                            &output, 
+                            create_matrix, 
+                            same_files, 
+                            &file_idx, 
+                            kmer_length, 
+                            equation
+                        );
+                    };
+                    hmh_distance::<_, f64>(
+                        reference_names,
+                        ref_sketch_file_name,
+                        query_names,
+                        query_sketch_file_name,
+                        create_matrix,
+                        same_files,
+                        emit
+                    )?
+                }
             } else if ref_map["algorithm"] == "ull" {
-
                 let estimator = s_matches
                     .get_one::<String>("estimator")
                     .cloned()
                     .unwrap_or_else(|| "fgra".to_string());
-
-                ull_distance(
-                    reference_names,
-                    ref_sketch_file_name,
-                    query_names,
-                    query_sketch_file_name,
-                    estimator, 
-                    create_matrix,
-                    same_files,
-                    print_list
-                ).unwrap()
+                if fp32 {
+                    let emit = move |rows: Vec<(&String, &String, f32)>| {
+                        print_dist(
+                            rows, 
+                            &output, 
+                            create_matrix, 
+                            same_files, 
+                            &file_idx, 
+                            kmer_length, 
+                            equation
+                        );
+                    };
+                    ull_distance::<_, f32>(
+                        reference_names,
+                        ref_sketch_file_name,
+                        query_names,
+                        query_sketch_file_name,
+                        estimator, 
+                        create_matrix,
+                        same_files,
+                        emit
+                    )?
+                } else {
+                    let emit = move |rows: Vec<(&String, &String, f64)>| {
+                        print_dist(
+                            rows, 
+                            &output, 
+                            create_matrix, 
+                            same_files, 
+                            &file_idx, 
+                            kmer_length, 
+                            equation
+                        );
+                    };
+                    ull_distance::<_, f64>(
+                        reference_names,
+                        ref_sketch_file_name,
+                        query_names,
+                        query_sketch_file_name,
+                        estimator, 
+                        create_matrix,
+                        same_files,
+                        emit
+                    )?
+                }
             } else {
                 // HLL
-                hll_distance(
-                    reference_names,
-                    ref_sketch_file_name,
-                    query_names,
-                    query_sketch_file_name,
-                    create_matrix,
-                    same_files,
-                    print_list
-                ).unwrap()
+                if fp32 {
+                    let emit = move |rows: Vec<(&String, &String, f32)>| {
+                        print_dist(
+                            rows, 
+                            &output, 
+                            create_matrix, 
+                            same_files, 
+                            &file_idx, 
+                            kmer_length, 
+                            equation
+                        );
+                    };
+                    hll_distance::<_, f32>(
+                        reference_names,
+                        ref_sketch_file_name,
+                        query_names,
+                        query_sketch_file_name,
+                        create_matrix,
+                        same_files,
+                        emit
+                    )?
+                } else {
+                    let emit = move |rows: Vec<(&String, &String, f64)>| {
+                        print_dist(
+                            rows, 
+                            &output, 
+                            create_matrix, 
+                            same_files, 
+                            &file_idx, 
+                            kmer_length, 
+                            equation
+                        );
+                    };
+                    hll_distance::<_, f64>(
+                        reference_names,
+                        ref_sketch_file_name,
+                        query_names,
+                        query_sketch_file_name,
+                        create_matrix,
+                        same_files,
+                        emit
+                    )?
+                }
             };
 
             println!("Distances computed.");
