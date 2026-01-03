@@ -8,10 +8,13 @@ use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
+use streaming_algorithms::HyperLogLog;
+use hyperminhash::Sketch;
+use ultraloglog::UltraLogLog;
 mod hasher;
 use serde_json::json;
 mod utils;
-use crate::utils::{hll_distance, hll_sketch, hmh_distance, hmh_sketch, ull_sketch, ull_distance};
+use crate::utils::{hll_distance, hmh_distance, ull_distance, sketch_files};
 use num_traits::Float;
 use std::sync::{Arc, Mutex};
 
@@ -21,7 +24,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     env_logger::Builder::from_default_env().init();
     // Set up the command-line arguments
     let matches = Command::new("Genome Sketching via HyperLogLog, HyperMinhash and UltraLogLog")
-        .version("0.1.3")
+        .version("0.1.4")
         .about("Fast and Memory Efficient (Meta)genome Sketching via HyperLogLog, HyperMinhash and UltraLogLog")
         .subcommand(
             Command::new("sketch")
@@ -90,6 +93,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .value_parser(clap::value_parser!(u64))
                 .default_value("42")
                 .action(ArgAction::Set)
+            )
+            .arg(
+                Arg::new("aa")
+                .long("aa")
+                .help("Amino acid sketching")
+                .required(false)
+                .action(clap::ArgAction::SetTrue)
+                .num_args(0)
             )
         )
         .subcommand(
@@ -184,6 +195,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             let alg = s_matches.get_one::<String>("algorithm").expect("required");
             let seed: u64 = *s_matches.get_one::<u64>("seed").expect("required");
 
+            let aa = s_matches.get_flag("aa");
+
             let files: Vec<String> = {
                 let f = File::open(sketch_file_name)?;
                 BufReader::new(f)
@@ -196,37 +209,47 @@ fn main() -> Result<(), Box<dyn Error>> {
             let result: Result<(), Box<dyn Error>>;
             if alg == "hmh" {
                 // create hypermash object and sketch
-                result = hmh_sketch(
+                result = sketch_files::<Sketch> (
+                    None,
                     files,
                     kmer_length,
                     output_name.clone(),
                     threads as u32,
                     seed,
+                    aa
                 );
             } else if alg == "hll" {
                 let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
-                result = hll_sketch(
-                    precision,
+                result = sketch_files::<HyperLogLog<i64>>(
+                    Some(precision),
                     files,
                     kmer_length,
                     output_name.clone(),
                     threads as u32,
                     seed,
+                    aa
                 );
             } else if alg == "ull" {
                 let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
-                result = ull_sketch(
-                    precision,
+                result = sketch_files::<UltraLogLog>(
+                    Some(precision),
                     files,
                     kmer_length,
                     output_name.clone(),
                     threads as u32,
                     seed,
+                    aa
                 );
             } else {
                 // input for alg is not hmh, ull, or hll
                 panic!("Algorithm must be either hmh, ull, or hll");
             }
+
+            let molecule_param = if aa {
+                "amino_acid".to_string()
+            } else {
+                "nucleotide".to_string()
+            };
 
             // parameter JSONs
             let params;
@@ -236,13 +259,15 @@ fn main() -> Result<(), Box<dyn Error>> {
                     "k": kmer_length.to_string(),
                     "algorithm": alg,
                     "precision": precision.to_string(),
-                    "seed": seed.to_string()
+                    "seed": seed.to_string(),
+                    "molecule": molecule_param
                 });
             } else {
                 params = json!({
                     "k": kmer_length.to_string(),
                     "algorithm": alg,
-                    "seed": seed.to_string()
+                    "seed": seed.to_string(),
+                    "molecule": molecule_param
                 });
             }
 

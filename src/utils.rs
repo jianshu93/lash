@@ -21,6 +21,7 @@ use kmerutils::base::{
     sequence::Sequence as KSeq,
     CompressedKmerT, Kmer16b32bit, Kmer32bit, Kmer64bit,
 };
+use kmerutils::aautils::kmeraa::{KmerAA32bit, KmerAA64bit};
 use ultraloglog::{Estimator, MaximumLikelihoodEstimator, UltraLogLog};
 
 use log::info;
@@ -338,101 +339,86 @@ where F: Fn(Vec<(&String, &String, T)>) + Send + Sync {
     Ok(())
 }
 
-// Each file is processed to completion in its own task (no inner parallelism / no channels).
-// This is simple, avoids stack overflows, and matches the “parallel by sample” request.
 
-pub fn hmh_sketch(
-    files: Vec<String>,
-    kmer_length: usize,
-    output_name: String,
-    threads: u32,
-    seed: u64,
-) -> Result<(), Box<dyn Error>> {
-    // build a Sketch per file in parallel
-    let sketches: HashMap<String, Sketch> = files
-        .par_iter()
-        .map(|file_name| {
-            let mut reader = parse_fastx_file(file_name).expect("Failed to parse file");
-            let mut global = Sketch::default();
+// sketch trait shared by HMH, ULL, and HLL
+pub trait KmerSketch: Send {
+    /// Create a new sketch
+    fn new(precision: Option<u32>) -> Self;
 
-            while let Some(rec_res) = reader.next() {
-                if let Ok(rec) = rec_res {
-                    let seq = filter_out_n(rec.seq().as_ref());
-                    if seq.len() < kmer_length {
-                        continue;
-                    }
-                    let kseq = KSeq::new(&seq, 2);
+    /// Add a canonical masked k-mer
+    fn add_kmer(&mut self, masked: u64, seed: u64);
 
-                    if kmer_length <= 14 {
-                        let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
-                        while let Some(km) = it.next() {
-                            let canon = km.min(km.reverse_complement());
-                            let masked =
-                                mask_bits(canon.get_compressed_value() as u64, kmer_length);
-                            global.add_bytes_with_seed(&(masked as u32).to_le_bytes(), seed);
-                        }
-                    } else if kmer_length == 16 {
-                        let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
-                        while let Some(km) = it.next() {
-                            let canon = km.min(km.reverse_complement());
-                            let masked =
-                                mask_bits(canon.get_compressed_value() as u64, kmer_length);
-                            global.add_bytes_with_seed(&(masked as u32).to_le_bytes(), seed);
-                        }
-                    } else if kmer_length <= 32 {
-                        let mut it = KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
-                        while let Some(km) = it.next() {
-                            let canon = km.min(km.reverse_complement());
-                            let masked = mask_bits(canon.get_compressed_value(), kmer_length);
-                            global.add_bytes_with_seed(&masked.to_le_bytes(), seed);
-                        }
-                    } else {
-                        panic!("k-mer length must be 1–32, k=15 is not supported");
-                    }
-                }
-            }
-
-            (file_name.clone(), global)
-        })
-        .collect();
-
-    // write names list
-    let names: Vec<String> = sketches.keys().cloned().collect();
-    to_writer_pretty(
-        &File::create(format!("{}_files.json", output_name))?,
-        &names,
-    )?;
-
-    // serialize sketches (compressed)
-    let out_bin = format!("{}_sketches.bin", output_name);
-    let mut writer = BufWriter::new(File::create(&out_bin)?);
-    let mut encoder = Encoder::new(&mut writer, 3).expect("failed to create compression");
-    encoder
-        .multithread(threads)
-        .expect("failed to multithread compressor");
-    for name in &names {
-        sketches[name].save(&mut encoder)?;
-    }
-    encoder.finish().expect("failed to compress");
-
-    println!("Serialized sketches with hmh");
-    Ok(())
+    /// Serialize
+    fn save<W: std::io::Write>(&self, writer: &mut W) -> Result<(), Box<dyn Error>>;
 }
 
-pub fn hll_sketch(
-    precision: u32,
+
+// HMH sketching
+impl KmerSketch for Sketch {
+    fn new(_: Option<u32>) -> Self {
+        Sketch::default()
+    }
+
+    fn add_kmer(&mut self, masked: u64, seed: u64) {
+        // HMH uses bytes + seed
+        self.add_bytes_with_seed(&(masked as u32).to_le_bytes(), seed);
+    }
+
+    fn save<W: std::io::Write>(&self, writer: &mut W) -> Result<(), Box<dyn Error>> {
+        Ok(self.save(writer)?)
+    }
+}
+
+// sketching for HyperLogLog
+impl KmerSketch for HyperLogLog<i64> {
+    fn new(precision: Option<u32>) -> Self {
+        HyperLogLog::with_p(precision.expect("HLL needs precision") as u8)
+    }
+
+    fn add_kmer(&mut self, masked: u64, seed: u64) {
+        self.push_hash64(xxh3_64_with_seed(&masked.to_le_bytes(), seed));
+    }
+
+    fn save<W: std::io::Write>(&self, writer: &mut W) -> Result<(), Box<dyn Error>> {
+        Ok(self.save(writer)?)
+    }
+}
+
+// sketching for UltraLogLog
+impl KmerSketch for UltraLogLog {
+    fn new(precision: Option<u32>) -> Self {
+        UltraLogLog::new(precision.expect("ULL needs precision"))
+            .expect("failed to create ULL")
+    }
+
+    fn add_kmer(&mut self, masked: u64, seed: u64) {
+        self.add(xxh3_64_with_seed(&masked.to_le_bytes(), seed));
+    }
+
+    fn save<W: std::io::Write>(&self, writer: &mut W) -> Result<(), Box<dyn Error>> {
+        Ok(self.save(writer)?)
+    }
+}
+
+// general sketching function
+// Each file is processed to completion in its own task (no inner parallelism / no channels).
+// This is simple, avoids stack overflows, and matches the “parallel by sample” request.
+pub fn sketch_files <S: KmerSketch> (
+    precision: Option<u32>,
     files: Vec<String>,
     kmer_length: usize,
     output_name: String,
     threads: u32,
     seed: u64,
+    aa: bool
 ) -> Result<(), Box<dyn Error>> {
-    // build an HLL per file in parallel
-    let hll_vec: Vec<HyperLogLog<i64>> = files
+
+    let sketches: Vec<S> = if ! aa { // genome sketching
+        files
         .par_iter()
         .map(|file_name| {
             let mut reader = parse_fastx_file(file_name).expect("Invalid input file");
-            let mut hll = HyperLogLog::<i64>::with_p(precision as u8);
+            let mut sketch = S::new(precision);
 
             while let Some(res) = reader.next() {
                 if let Ok(seqrec) = res {
@@ -440,141 +426,122 @@ pub fn hll_sketch(
                     if seq.len() < kmer_length {
                         continue;
                     }
+
                     let kseq = KSeq::new(&seq, 2);
 
                     if kmer_length <= 14 {
-                        let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
-                        while let Some(km) = it.next() {
-                            let canon = km.min(km.reverse_complement());
-                            let masked =
-                                mask_bits(canon.get_compressed_value() as u64, kmer_length);
-                            hll.push_hash64(xxh3_64_with_seed(&masked.to_le_bytes(), seed));
+                            let mut it =
+                                KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
+                            while let Some(km) = it.next() {
+                                let canon = km.min(km.reverse_complement());
+                                let masked = mask_bits(
+                                    canon.get_compressed_value() as u64,
+                                    kmer_length,
+                                );
+                                sketch.add_kmer(masked, seed);
+                            }
                         }
-                    } else if kmer_length == 16 {
-                        let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
-                        while let Some(km) = it.next() {
-                            let canon = km.min(km.reverse_complement());
-                            let masked =
-                                mask_bits(canon.get_compressed_value() as u64, kmer_length);
-                            hll.push_hash64(xxh3_64_with_seed(&masked.to_le_bytes(), seed));
+                    else if kmer_length == 16 {
+                            let mut it =
+                                KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
+                            while let Some(km) = it.next() {
+                                let canon = km.min(km.reverse_complement());
+                                let masked = mask_bits(
+                                    canon.get_compressed_value() as u64,
+                                    kmer_length,
+                                );
+                                sketch.add_kmer(masked, seed);
+                            }
                         }
-                    } else if kmer_length <= 32 {
-                        let mut it = KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
-                        while let Some(km) = it.next() {
-                            let canon = km.min(km.reverse_complement());
-                            let masked = mask_bits(canon.get_compressed_value(), kmer_length);
-                            hll.push_hash64(xxh3_64_with_seed(&masked.to_le_bytes(), seed));
+                    else if kmer_length <= 32 {
+                            let mut it =
+                                KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
+                            while let Some(km) = it.next() {
+                                let canon = km.min(km.reverse_complement());
+                                let masked =
+                                    mask_bits(canon.get_compressed_value(), kmer_length);
+                                sketch.add_kmer(masked, seed);
+                            }
                         }
-                    } else {
-                        panic!("k-mer length must be 1–32, k=15 is not supported");
+                    else {
+                        panic!("k-mer length must be 1–32");
+                    } 
                     }
-                }
+                
             }
 
-            hll
+            sketch
         })
-        .collect();
-
-    // write compressed sketches
-    let sketch_output =
-        File::create(format!("{}_sketches.bin", &output_name)).expect("Failed to create file");
-    let writer = BufWriter::new(sketch_output);
-
-    let mut encoder = Encoder::new(writer, 3).expect("failed to create compression");
-    encoder
-        .multithread(threads)
-        .expect("failed to multithread compressor");
-    for hll in &hll_vec {
-        hll.clone().save(&mut encoder).expect("Failed to save HLL");
+        .collect()
     }
-    encoder.finish().expect("failed to compress");
-
-    // names & params
-    to_writer_pretty(
-        &File::create(format!("{}_files.json", &output_name))?,
-        &files,
-    )?;
-
-    println!("Serialized sketches with hll");
-    Ok(())
-}
-
-pub fn ull_sketch(
-    precision: u32,
-    files: Vec<String>,
-    kmer_length: usize,
-    output_name: String,
-    threads: u32,
-    seed: u64,
-) -> Result<(), Box<dyn Error>> {
-    // build a ULL per file in parallel
-    let ull_vec: Vec<UltraLogLog> = files
+    else { // amino acid sketching
+        files
         .par_iter()
         .map(|file_name| {
             let mut reader = parse_fastx_file(file_name).expect("Invalid input file");
-            let mut ull = UltraLogLog::new(precision).expect("failed to create ULL");
+            let mut sketch = S::new(precision);
 
-            while let Some(result) = reader.next() {
-                if let Ok(seqrec) = result {
+            while let Some(res) = reader.next() {
+                if let Ok(seqrec) = res {
                     let seq = filter_out_n(seqrec.seq().as_ref());
                     if seq.len() < kmer_length {
                         continue;
                     }
-                    let kseq = KSeq::new(&seq, 2);
 
-                    if kmer_length <= 14 {
-                        let mut it = KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
+                    let kseq = KSeq::new(&seq, 5); // 5 bases for aa
+
+                    if kmer_length <= 6 {
+                        let mut it =
+                            KmerSeqIterator::<KmerAA32bit>::new(kmer_length as u8, &kseq);
                         while let Some(km) = it.next() {
-                            let canon = km.min(km.reverse_complement());
-                            let masked =
-                                mask_bits(canon.get_compressed_value() as u64, kmer_length);
-                            ull.add(xxh3_64_with_seed(&masked.to_le_bytes(), seed));
+                            //let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(
+                                km.get_compressed_value() as u64,
+                                kmer_length,
+                            );
+                            sketch.add_kmer(masked, seed);
                         }
-                    } else if kmer_length == 16 {
-                        let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
-                        while let Some(km) = it.next() {
-                            let canon = km.min(km.reverse_complement());
-                            let masked =
-                                mask_bits(canon.get_compressed_value() as u64, kmer_length);
-                            ull.add(xxh3_64_with_seed(&masked.to_le_bytes(), seed));
-                        }
-                    } else if kmer_length <= 32 {
-                        let mut it = KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
-                        while let Some(km) = it.next() {
-                            let canon = km.min(km.reverse_complement());
-                            let masked = mask_bits(canon.get_compressed_value(), kmer_length);
-                            ull.add(xxh3_64_with_seed(&masked.to_le_bytes(), seed));
-                        }
-                    } else {
-                        panic!("k-mer length must be 1–32, k=15 is not supported");
                     }
+                    else if kmer_length <= 12 {
+                        let mut it =
+                            KmerSeqIterator::<KmerAA64bit>::new(kmer_length as u8, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(
+                                canon.get_compressed_value() as u64,
+                                kmer_length,
+                            );
+                            sketch.add_kmer(masked, seed);
+                        }
+                    }
+                    else {
+                        panic!("k-mer length for amino acid must be 1–12");
+                    } 
                 }
+                
             }
 
-            ull
+            sketch
         })
-        .collect();
+        .collect()
+    };
+    
 
-    // write compressed sketches
-    let sketch_output =
-        File::create(format!("{}_sketches.bin", &output_name)).expect("Failed to create file");
-    let writer = BufWriter::new(sketch_output);
+    // write sketches
+    let writer = BufWriter::new(File::create(format!("{}_sketches.bin", output_name))?);
+    let mut encoder = Encoder::new(writer, 3)?;
+    encoder.multithread(threads)?;
 
-    let mut encoder = Encoder::new(writer, 3).expect("failed to create compression");
-    encoder
-        .multithread(threads)
-        .expect("failed to multithread compressor");
-    for ull in &ull_vec {
-        ull.save(&mut encoder).expect("Failed to save UltraLogLog");
+    for sketch in sketches {
+        sketch.save(&mut encoder)?;
     }
-    encoder.finish().expect("failed to compress");
+    encoder.finish()?;
 
-    // names
+    // write names
     to_writer_pretty(
-        &File::create(format!("{}_files.json", &output_name))?,
+        &File::create(format!("{}_files.json", output_name))?,
         &files,
     )?;
 
-    println!("Serialized sketches with ull");
     Ok(())
 }
