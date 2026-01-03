@@ -38,6 +38,22 @@ pub fn filter_out_n(seq: &[u8]) -> Vec<u8> {
     out
 }
 
+pub fn filter_out_a(seq: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(seq.len());
+    for &c in seq {
+        if matches!(
+            c,
+            b'A' | b'C' | b'D' | b'E' | b'F' |
+            b'G' | b'H' | b'I' | b'K' | b'L' |
+            b'M' | b'N' | b'P' | b'Q' | b'R' |
+            b'S' | b'T' | b'V' | b'W' | b'Y'
+        ) {
+            out.push(c);
+        }
+    }
+    out
+}
+
 pub fn mask_bits(v: u64, k: usize) -> u64 {
     let b = 2 * k as u32;
     if b == 64 {
@@ -345,7 +361,7 @@ pub trait KmerSketch: Send {
     /// Create a new sketch
     fn new(precision: Option<u32>) -> Self;
 
-    /// Add a canonical masked k-mer
+    /// Add a masked k-mer
     fn add_kmer(&mut self, masked: u64, seed: u64);
 
     /// Serialize
@@ -483,12 +499,12 @@ pub fn sketch_files <S: KmerSketch> (
 
             while let Some(res) = reader.next() {
                 if let Ok(seqrec) = res {
-                    let seq = filter_out_n(seqrec.seq().as_ref());
+                    let seq = filter_out_a(seqrec.seq().as_ref());
                     if seq.len() < kmer_length {
                         continue;
                     }
 
-                    let kseq = KSeq::new(&seq, 5); // 5 bases for aa
+                    let kseq = KSeq::new(&seq, 8); // 8 bits
 
                     if kmer_length <= 6 {
                         let mut it =
@@ -506,9 +522,9 @@ pub fn sketch_files <S: KmerSketch> (
                         let mut it =
                             KmerSeqIterator::<KmerAA64bit>::new(kmer_length as u8, &kseq);
                         while let Some(km) = it.next() {
-                            let canon = km.min(km.reverse_complement());
+
                             let masked = mask_bits(
-                                canon.get_compressed_value() as u64,
+                                km.get_compressed_value() as u64,
                                 kmer_length,
                             );
                             sketch.add_kmer(masked, seed);
