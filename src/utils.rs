@@ -13,7 +13,7 @@ use xxhash_rust::xxh3::xxh3_64_with_seed;
 // use xxhash_rust::xxh3::xxh3_64;
 
 use zstd::stream::{Decoder, Encoder};
-
+use std::str::FromStr;
 use hyperminhash::Sketch;
 use kmerutils::base::KmerT;
 use kmerutils::base::{
@@ -21,7 +21,9 @@ use kmerutils::base::{
     sequence::Sequence as KSeq,
     CompressedKmerT, Kmer16b32bit, Kmer32bit, Kmer64bit,
 };
-use kmerutils::aautils::kmeraa::{KmerAA32bit, KmerAA64bit};
+
+use kmerutils::aautils::kmeraa::{KmerAA32bit, KmerAA64bit, 
+    KmerSeqIterator as AAKmerSeqIterator, SequenceAA, KmerSeqIteratorT as aaIteratorT};
 use ultraloglog::{Estimator, MaximumLikelihoodEstimator, UltraLogLog};
 
 use log::info;
@@ -39,19 +41,17 @@ pub fn filter_out_n(seq: &[u8]) -> Vec<u8> {
 }
 
 pub fn filter_out_a(seq: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(seq.len());
-    for &c in seq {
-        if matches!(
-            c,
-            b'A' | b'C' | b'D' | b'E' | b'F' |
-            b'G' | b'H' | b'I' | b'K' | b'L' |
-            b'M' | b'N' | b'P' | b'Q' | b'R' |
-            b'S' | b'T' | b'V' | b'W' | b'Y'
-        ) {
-            out.push(c);
-        }
-    }
-    out
+    seq.iter()
+    .copied()
+    .filter(|&c| {
+        matches!(
+        c, b'A' | b'C' | b'D' | b'E' | b'F' | b'G' | b'H' 
+        | b'I' | b'K' | b'L' | b'M' | b'N' | b'P' | b'Q' | b'R' 
+        | b'S' | b'T' | b'V' | b'W' | b'Y'
+
+        )
+    })
+    .collect()
 }
 
 pub fn mask_bits(v: u64, k: usize) -> u64 {
@@ -61,6 +61,23 @@ pub fn mask_bits(v: u64, k: usize) -> u64 {
     } else {
         v & ((1u64 << b) - 1)
     }
+}
+
+pub fn mask_aa_bits(v: u64, k: usize, nb_bits: u8) -> u64 {
+    let b = (nb_bits * k as u8) as u32;
+    if b == 0 {
+        0
+    }
+    else if b >= 64 {
+        v
+    } else {
+        v & ((1u64 << b) - 1)
+    }
+}
+
+fn bytes_to_sequence_aa(seq: &[u8]) -> SequenceAA {
+    let s = std::str::from_utf8(seq).expect("AA- FASTA contains non-UTF8 bytes");
+    SequenceAA::from_str(s).expect("invalidAA sequence for SequenceAA")
 }
 
 // distances
@@ -388,7 +405,7 @@ impl KmerSketch for Sketch {
 // sketching for HyperLogLog
 impl KmerSketch for HyperLogLog<i64> {
     fn new(precision: Option<u32>) -> Self {
-        HyperLogLog::with_p(precision.expect("HLL needs precision") as u8)
+        HyperLogLog::<i64>::with_p(precision.expect("HLL needs precision") as u8)
     }
 
     fn add_kmer(&mut self, masked: u64, seed: u64) {
@@ -444,41 +461,41 @@ pub fn sketch_files <S: KmerSketch> (
                     }
 
                     let kseq = KSeq::new(&seq, 2);
-
+                    // kmers go through an iterator, canonicalized, masked, and added to the data structure
                     if kmer_length <= 14 {
-                            let mut it =
-                                KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
-                            while let Some(km) = it.next() {
-                                let canon = km.min(km.reverse_complement());
-                                let masked = mask_bits(
-                                    canon.get_compressed_value() as u64,
-                                    kmer_length,
-                                );
-                                sketch.add_kmer(masked, seed);
-                            }
+                        let mut it =
+                            KmerSeqIterator::<Kmer32bit>::new(kmer_length as u8, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(
+                                canon.get_compressed_value() as u64,
+                                kmer_length,
+                            );
+                            sketch.add_kmer(masked, seed);
                         }
+                    }
                     else if kmer_length == 16 {
-                            let mut it =
-                                KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
-                            while let Some(km) = it.next() {
-                                let canon = km.min(km.reverse_complement());
-                                let masked = mask_bits(
-                                    canon.get_compressed_value() as u64,
-                                    kmer_length,
-                                );
-                                sketch.add_kmer(masked, seed);
-                            }
+                        let mut it =
+                            KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked = mask_bits(
+                                canon.get_compressed_value() as u64,
+                                kmer_length,
+                            );
+                            sketch.add_kmer(masked, seed);
                         }
+                    }
                     else if kmer_length <= 32 {
-                            let mut it =
-                                KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
-                            while let Some(km) = it.next() {
-                                let canon = km.min(km.reverse_complement());
-                                let masked =
-                                    mask_bits(canon.get_compressed_value(), kmer_length);
-                                sketch.add_kmer(masked, seed);
-                            }
+                        let mut it =
+                            KmerSeqIterator::<Kmer64bit>::new(kmer_length as u8, &kseq);
+                        while let Some(km) = it.next() {
+                            let canon = km.min(km.reverse_complement());
+                            let masked =
+                                mask_bits(canon.get_compressed_value(), kmer_length);
+                            sketch.add_kmer(masked, seed);
                         }
+                    }
                     else {
                         panic!("k-mer length must be 1–32");
                     } 
@@ -495,44 +512,47 @@ pub fn sketch_files <S: KmerSketch> (
         .par_iter()
         .map(|file_name| {
             let mut reader = parse_fastx_file(file_name).expect("Invalid input file");
-            let mut sketch = S::new(precision);
+            let mut sketch: S = S::new(precision);
 
             while let Some(res) = reader.next() {
                 if let Ok(seqrec) = res {
-                    let seq = filter_out_a(seqrec.seq().as_ref());
+                    let seq = seqrec.seq().to_ascii_uppercase();
+
                     if seq.len() < kmer_length {
                         continue;
                     }
 
-                    let kseq = KSeq::new(&seq, 8); // 8 bits
-
+                    let seqaa = bytes_to_sequence_aa(&filter_out_a(&seq));
+                    
                     if kmer_length <= 6 {
                         let mut it =
-                            KmerSeqIterator::<KmerAA32bit>::new(kmer_length as u8, &kseq);
+                            AAKmerSeqIterator::<KmerAA32bit>::new(kmer_length, &seqaa);
                         while let Some(km) = it.next() {
-                            //let canon = km.min(km.reverse_complement());
-                            let masked = mask_bits(
+                            let masked = mask_aa_bits( // no reverse complement for aa
                                 km.get_compressed_value() as u64,
                                 kmer_length,
+                                km.get_nb_base()
                             );
                             sketch.add_kmer(masked, seed);
                         }
                     }
                     else if kmer_length <= 12 {
                         let mut it =
-                            KmerSeqIterator::<KmerAA64bit>::new(kmer_length as u8, &kseq);
-                        while let Some(km) = it.next() {
+                            AAKmerSeqIterator::<KmerAA64bit>::new(kmer_length, &seqaa);
 
-                            let masked = mask_bits(
-                                km.get_compressed_value() as u64,
+                        while let Some(km) = it.next() {
+                            let packed = km.get_compressed_value();
+                            let masked = mask_aa_bits(
+                                packed as u64,
                                 kmer_length,
+                                km.get_nb_base()
                             );
                             sketch.add_kmer(masked, seed);
                         }
                     }
                     else {
                         panic!("k-mer length for amino acid must be 1–12");
-                    } 
+                    };
                 }
                 
             }
