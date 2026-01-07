@@ -9,9 +9,9 @@ This is a software for genome sketching and distance approximation in LogLog spa
 </div>
 
 ### Description ###
-Genome sketching can be extremely accurate but requires a huge amount of memory for MinHash-like algorithms. Recently, a new algorithm combining MinHash and HyperLogLog, called HyerMinHash was invented (1), which can perform MinHash in loglog space, a significant decrease in space/memory requirement. Together with [lukaslueg](https://github.com/lukaslueg), we first created a Rust library [hyperminhash](https://github.com/lukaslueg/hyperminhash) and then combined rolling hashing with HyperMinHash for extremely fast processing of genomic sequences. 
+Genome sketching can be extremely accurate but requires a huge amount of memory for MinHash-like algorithms. Recently, a new algorithm combining MinHash and HyperLogLog, called HyperMinHash was invented (1), which can perform MinHash in loglog space, a significant decrease in space/memory requirement. Together with [lukaslueg](https://github.com/lukaslueg), we first created a Rust library [hyperminhash](https://github.com/lukaslueg/hyperminhash) and then combined rolling hashing with HyperMinHash for extremely fast processing of genomic sequences. 
 
-We also included the HyperLogLog algorithm (2), implemented  from the library [streaming_algorithms](https://github.com/jianshu93/streaming_algorithms/tree/master). HyperLogLog is more space efficient than HyperMinHash, though not as space efficient as UltraLogLog (3). Both use hashing algorithms that transform elements into a binary number, where the number of leading 0s is kept track of to estimate cardinality. UltraLogLog can be up to 28% more space efficient than HyperLogLog due to a better sketch structure and estimator. It also has better compaction when using compressing algorithms (e.g., zstd). Ultraloglog was implemented with [waynexia](https://github.com/waynexia), see [ultraloglog](https://github.com/waynexia/ultraloglog). 
+We also included the HyperLogLog algorithm (2), implemented  from the library [streaming_algorithms](https://github.com/jianshu93/streaming_algorithms/tree/master). HyperLogLog is more space efficient than HyperMinHash, though not as space efficient as UltraLogLog (3), another option included. Both use hashing algorithms that transform elements into a binary number, where the number of leading 0s is kept track of to estimate cardinality. UltraLogLog can be up to 28% more space efficient than HyperLogLog due to a better sketch structure and estimator. It also has better compaction when using compressing algorithms (e.g., zstd). Ultraloglog was implemented with [waynexia](https://github.com/waynexia), see [ultraloglog](https://github.com/waynexia/ultraloglog). 
 
 We employed a simple producer-consumer model to also reduce memory requirement for large files, e.g., metagenomic files. Both sketching and distance computation are parallelized to make full use of all CPU threads/cores. Xxhash3 was used as the underlying hashing technique. 
 
@@ -76,8 +76,9 @@ Options:
   -a, --algorithm <algorithm>  Which algorithm to use: HyperMinHash (hmh), UltraLogLog (ull), or HyperLogLog (hll) [default: hmh]
   -p, --precision <precision>  Specifiy precision, for ull and hll only. [default: 10]
   -s, --seed <seed>            Random seed [default: 42]
+  --aa                         Amino acid sketching. k<= 12 supported. Input protein files. (distance will be the same command)
   -h, --help                   Print help
-
+                       
 
 $ ./lash dist -h
 

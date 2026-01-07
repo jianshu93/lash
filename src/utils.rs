@@ -453,6 +453,7 @@ pub fn sketch_files <S: KmerSketch> (
             let mut reader = parse_fastx_file(file_name).expect("Invalid input file");
             let mut sketch = S::new(precision);
 
+            // looping through each sequence in file
             while let Some(res) = reader.next() {
                 if let Ok(seqrec) = res {
                     let seq = filter_out_n(seqrec.seq().as_ref());
@@ -514,6 +515,7 @@ pub fn sketch_files <S: KmerSketch> (
             let mut reader = parse_fastx_file(file_name).expect("Invalid input file");
             let mut sketch: S = S::new(precision);
 
+            // looping through each sequence in the file
             while let Some(res) = reader.next() {
                 if let Ok(seqrec) = res {
                     let seq = seqrec.seq().to_ascii_uppercase();
