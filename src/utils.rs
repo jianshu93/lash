@@ -63,8 +63,8 @@ pub fn mask_bits(v: u64, k: usize) -> u64 {
     }
 }
 
-pub fn mask_aa_bits(v: u64, k: usize, nb_bits: u8) -> u64 {
-    let b = (nb_bits * k as u8) as u32;
+pub fn mask_aa_bits(v: u64, k: usize) -> u64 {
+    let b = 5 * k as u32;
     if b == 0 {
         0
     }
@@ -531,7 +531,6 @@ pub fn sketch_files <S: KmerSketch> (
                             let masked = mask_aa_bits( // no reverse complement for aa
                                 km.get_compressed_value() as u64,
                                 kmer_length,
-                                km.get_nb_base()
                             );
                             sketch.add_kmer(masked, seed);
                         }
@@ -545,7 +544,6 @@ pub fn sketch_files <S: KmerSketch> (
                             let masked = mask_aa_bits(
                                 packed as u64,
                                 kmer_length,
-                                km.get_nb_base()
                             );
                             sketch.add_kmer(masked, seed);
                         }
