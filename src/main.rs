@@ -94,14 +94,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .default_value("42")
                 .action(ArgAction::Set)
             )
-            .arg(
-                Arg::new("aa")
-                .long("aa")
-                .help("Amino acid sketching")
-                .required(false)
-                .action(clap::ArgAction::SetTrue)
-                .num_args(0)
-            )
+            // .arg(
+            //     Arg::new("aa")
+            //     .long("aa")
+            //     .help("Amino acid sketching")
+            //     .required(false)
+            //     .action(clap::ArgAction::SetTrue)
+            //     .num_args(0)
+            // )
         )
         .subcommand(
             Command::new("dist")
@@ -195,7 +195,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             let alg = s_matches.get_one::<String>("algorithm").expect("required");
             let seed: u64 = *s_matches.get_one::<u64>("seed").expect("required");
 
-            let aa = s_matches.get_flag("aa");
+            let aa = false; //s_matches.get_flag("aa");
 
             let files: Vec<String> = {
                 let f = File::open(sketch_file_name)?;

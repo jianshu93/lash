@@ -76,7 +76,6 @@ Options:
   -a, --algorithm <algorithm>  Which algorithm to use: HyperMinHash (hmh), UltraLogLog (ull), or HyperLogLog (hll) [default: hmh]
   -p, --precision <precision>  Specifiy precision, for ull and hll only. [default: 10]
   -s, --seed <seed>            Random seed [default: 42]
-  --aa                         Amino acid sketching. k<= 12 supported. Input protein files. (distance will be the same command)
   -h, --help                   Print help
                        
 
