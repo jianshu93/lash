@@ -8,7 +8,6 @@ use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::ptr::read;
 use streaming_algorithms::HyperLogLog;
 use hyperminhash::Sketch;
 use exaloglog::ExaLogLog;
@@ -16,7 +15,7 @@ use ultraloglog::UltraLogLog;
 mod hasher;
 use serde_json::json;
 mod utils;
-use crate::utils::{hll_distance, hmh_distance, ull_distance, ell_distance, sketch_files, ull_ell_distance};
+use crate::utils::{hll_distance, hmh_distance, sketch_files, ull_ell_distance};
 use num_traits::{Float, NumCast};
 use std::sync::{Arc, Mutex};
 
