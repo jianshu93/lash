@@ -8,14 +8,16 @@ use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
+use std::ptr::read;
 use streaming_algorithms::HyperLogLog;
 use hyperminhash::Sketch;
+use exaloglog::ExaLogLog;
 use ultraloglog::UltraLogLog;
 mod hasher;
 use serde_json::json;
 mod utils;
-use crate::utils::{hll_distance, hmh_distance, ull_distance, sketch_files};
-use num_traits::Float;
+use crate::utils::{hll_distance, hmh_distance, ull_distance, ell_distance, sketch_files, ull_ell_distance};
+use num_traits::{Float, NumCast};
 use std::sync::{Arc, Mutex};
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -69,7 +71,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Arg::new("algorithm")
                 .short('a')
                 .long("algorithm")
-                .help("Which algorithm to use: HyperMinHash (hmh), UltraLogLog (ull), or HyperLogLog (hll)")
+                .help("Which algorithm to use: HyperMinHash (hmh), UltraLogLog (ull), HyperLogLog (hll), or ExaLogLog (ell)")
                 .required(false)
                 .default_value("hmh")
                 .action(ArgAction::Set)
@@ -81,6 +83,24 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .help("Specifiy precision, for ull and hll only.")
                 .required(false)
                 .value_parser(clap::value_parser!(usize))
+                .default_value("10")
+                .action(ArgAction::Set)
+            )
+            .arg(
+                Arg::new("t_ell")
+                .long("t_ell")
+                .help("Specifiy t, for ell only")
+                .required(false)
+                .value_parser(clap::value_parser!(u32))
+                .default_value("10")
+                .action(ArgAction::Set)
+            )
+            .arg(
+                Arg::new("d_ell")
+                .long("d_ell")
+                .help("Specifiy d, for ell only")
+                .required(false)
+                .value_parser(clap::value_parser!(u32))
                 .default_value("10")
                 .action(ArgAction::Set)
             )
@@ -205,11 +225,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                     .filter(|l| !l.trim().is_empty())
                     .collect()
             };
+            
 
             let result: Result<(), Box<dyn Error>>;
             if alg == "hmh" {
                 // create hypermash object and sketch
                 result = sketch_files::<Sketch> (
+                    None,
+                    None,
                     None,
                     files,
                     kmer_length,
@@ -222,6 +245,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
                 result = sketch_files::<HyperLogLog<i64>>(
                     Some(precision),
+                    None,
+                    None,
                     files,
                     kmer_length,
                     output_name.clone(),
@@ -233,6 +258,8 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
                 result = sketch_files::<UltraLogLog>(
                     Some(precision),
+                    None,
+                    None,
                     files,
                     kmer_length,
                     output_name.clone(),
@@ -240,7 +267,23 @@ fn main() -> Result<(), Box<dyn Error>> {
                     seed,
                     aa
                 );
-            } else {
+            } else if alg == "ell" {
+                let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
+                let d = *s_matches.get_one::<u32>("d_ell").unwrap_or(&10);
+                let t = *s_matches.get_one::<u32>("t_ell").unwrap_or(&10);
+                result = sketch_files::<ExaLogLog>(
+                    Some(precision),
+                    Some(t), 
+                    Some(d),
+                    files,
+                    kmer_length,
+                    output_name.clone(),
+                    threads as u32,
+                    seed,
+                    aa
+                );
+            }
+            else {
                 // input for alg is not hmh, ull, or hll
                 panic!("Algorithm must be either hmh, ull, or hll");
             }
@@ -262,10 +305,24 @@ fn main() -> Result<(), Box<dyn Error>> {
                     "seed": seed.to_string(),
                     "molecule": molecule_param
                 });
-            } else {
+            } else if alg == "hmh" {
                 params = json!({
                     "k": kmer_length.to_string(),
                     "algorithm": alg,
+                    "seed": seed.to_string(),
+                    "molecule": molecule_param
+                });
+            } 
+            else {
+                let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
+                let d = *s_matches.get_one::<u32>("d_ell").unwrap_or(&10);
+                let t = *s_matches.get_one::<u32>("t_ell").unwrap_or(&10);
+                params = json!({
+                    "k": kmer_length.to_string(),
+                    "algorithm": alg,
+                    "p": precision.to_string(),
+                    "d": d.to_string(),
+                    "t": t.to_string(),
                     "seed": seed.to_string(),
                     "molecule": molecule_param
                 });
@@ -374,9 +431,23 @@ fn main() -> Result<(), Box<dyn Error>> {
             if ref_map["algorithm"] == "ull" || ref_map["algorithm"] == "hll" {
                 if ref_map["precision"] != query_map["precision"] {
                     panic!(
-                        "{} was not sketched with same precision btwn genomes",
+                        "{} was not sketched with same precision between query & ref",
                         ref_map["algorithm"]
                     );
+                }
+            }
+            if ref_map["algorithm"] == "ell" {
+                if ref_map["t"] != query_map["t"] {
+                    panic!(
+                        "{} was not sketched with same t btwn query & ref",
+                        ref_map["algorithm"]
+                    )
+                }
+                if ref_map["d"] != query_map["d"] {
+                    panic!(
+                        "{} was not sketched with same t btwn query & ref",
+                        ref_map["algorithm"]
+                    )
                 }
             }
             // assign kmer length once k matches
@@ -413,7 +484,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             
             // function to compute distance from fraction
             fn compute_distance<F: Float>(frac: F, kmer_length: usize, equation: u8) -> F {
-                let k = F::from(kmer_length).unwrap();
+                let k: F = NumCast::from(kmer_length).unwrap();
 
                 match equation {
                     1 => (-frac.ln() / k).min(F::one()),
@@ -532,7 +603,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             equation
                         );
                     };
-                    ull_distance::<_, f32>(
+                    ull_ell_distance::<_, UltraLogLog, f32>(
                         reference_names,
                         ref_sketch_file_name,
                         query_names,
@@ -554,7 +625,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                             equation
                         );
                     };
-                    ull_distance::<_, f64>(
+                    ull_ell_distance::<_, UltraLogLog, f64>(
                         reference_names,
                         ref_sketch_file_name,
                         query_names,
@@ -565,7 +636,55 @@ fn main() -> Result<(), Box<dyn Error>> {
                         emit
                     )?
                 }
-            } else {
+            }
+            else if ref_map["algorithm"] == "ell" {
+                if fp32 {
+                    let emit = move |rows: Vec<(&String, &String, f32)>| {
+                        print_dist(
+                            rows, 
+                            &output, 
+                            create_matrix, 
+                            same_files, 
+                            &file_idx, 
+                            kmer_length, 
+                            equation
+                        );
+                    };
+                    ull_ell_distance::<_, ExaLogLog, f32>(
+                        reference_names,
+                        ref_sketch_file_name,
+                        query_names,
+                        query_sketch_file_name,
+                        "".to_string(), 
+                        create_matrix,
+                        same_files,
+                        emit
+                    )?
+                } else {
+                    let emit = move |rows: Vec<(&String, &String, f64)>| {
+                        print_dist(
+                            rows, 
+                            &output, 
+                            create_matrix, 
+                            same_files, 
+                            &file_idx, 
+                            kmer_length, 
+                            equation
+                        );
+                    };
+                    ull_ell_distance::<_, ExaLogLog, f64>(
+                        reference_names,
+                        ref_sketch_file_name,
+                        query_names,
+                        query_sketch_file_name,
+                        "".to_string(), 
+                        create_matrix,
+                        same_files,
+                        emit
+                    )?
+                }
+            }
+            else {
                 // HLL
                 if fp32 {
                     let emit = move |rows: Vec<(&String, &String, f32)>| {

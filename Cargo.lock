@@ -547,6 +547,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "exaloglog"
+version = "0.1.0"
+source = "git+https://github.com/jianshu93/exaloglog#5f78b9853e845ac9fc49f6d8c7b9d7c925cd3001"
+dependencies = [
+ "bincode",
+ "serde",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "flate2"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -962,6 +972,7 @@ dependencies = [
  "clap",
  "crossbeam-channel",
  "env_logger",
+ "exaloglog",
  "hashbrown",
  "hashers",
  "hyperminhash",

@@ -15,13 +15,14 @@ use xxhash_rust::xxh3::xxh3_64_with_seed;
 use zstd::stream::{Decoder, Encoder};
 use std::str::FromStr;
 use hyperminhash::Sketch;
+use exaloglog::ExaLogLog;
 use kmerutils::base::KmerT;
 use kmerutils::base::{
     kmergenerator::{KmerSeqIterator, KmerSeqIteratorT},
     sequence::Sequence as KSeq,
     CompressedKmerT, Kmer16b32bit, Kmer32bit, Kmer64bit,
 };
-
+use num_traits::{NumCast};
 use kmerutils::aautils::kmeraa::{KmerAA32bit, KmerAA64bit, 
     KmerSeqIterator as AAKmerSeqIterator, SequenceAA, KmerSeqIteratorT as aaIteratorT};
 use ultraloglog::{Estimator, MaximumLikelihoodEstimator, UltraLogLog};
@@ -183,6 +184,146 @@ where F: Fn(Vec<(&String, &String, T)>) + Send + Sync
     
 }
 
+pub trait UllEllSketch {
+    fn load(decoder: &mut Decoder<BufReader<File>>) -> std::io::Result<Self> where Self: Sized;
+    fn cardinality(&self, e: Option<String>) -> Result<f64, Box<dyn Error>>;
+    fn merge(a: &Self, b: &Self, e: Option<String>) -> Result<f64, Box<dyn Error>>;
+}
+
+impl UllEllSketch for UltraLogLog {
+    fn load(decoder: &mut Decoder<BufReader<File>>) -> std::io::Result<UltraLogLog> {
+        UltraLogLog::load(decoder)
+    }
+    fn merge(a: &UltraLogLog, b: &UltraLogLog, e: Option<String>) -> Result<f64, Box<dyn Error>> {
+        let estimator = e.expect("error with unwrapping ull estimator");
+        let union_ull =
+                UltraLogLog::merge(&a, &b)
+                    .expect("failed to merge sketches");
+
+            //let union_count = union_ull.get_distinct_count_estimate();
+        let union_count: f64 = match estimator.as_str() {
+            "fgra" => union_ull.get_distinct_count_estimate(),
+            "ml" => MaximumLikelihoodEstimator.estimate(&union_ull),
+            _ => panic!("estimator needs to be either fgra or ml"),
+        };
+        Ok(union_count)
+    }
+    fn cardinality(&self, e: Option<String>) -> Result<f64, Box<dyn Error>> {
+        let estimator = e.expect("error with ull estimator");
+        let union_count: f64 = match estimator.as_str() {
+            "fgra" => self.get_distinct_count_estimate(),
+            "ml" => MaximumLikelihoodEstimator.estimate(&self),
+            _ => panic!("estimator needs to be either fgra or ml"),
+        };
+        Ok(union_count)
+    }
+}
+
+impl UllEllSketch for ExaLogLog {
+    fn load(decoder: &mut Decoder<BufReader<File>>) -> std::io::Result<ExaLogLog> {
+        ExaLogLog::load(decoder)
+    }
+    fn merge(a: &ExaLogLog, b: &ExaLogLog, _: Option<String>) -> Result<f64, Box<dyn Error>> {
+        let union_ell = ExaLogLog::merge(&a, &b).expect("failed to merge sketches");
+
+        let union_count: f64 = union_ell.estimate();
+        Ok(union_count)
+    }
+    fn cardinality(&self, _: Option<String>) -> Result<f64, Box<dyn Error>> {
+        Ok(self.estimate())
+    }
+}
+
+fn create_map<S: UllEllSketch>(
+    sketch_file: File,
+    names: &Vec<String>,
+    estimator: &String,
+) -> Result<HashMap<String, (S, f64), Xxh3Builder>, std::io::Error> {
+    let hasher = Xxh3Builder { seed: 93 };
+    let mut sketches = HashMap::with_hasher(hasher);
+    let mut decoder = Decoder::new(sketch_file).expect("failed to create decompressor");
+    for file in names {
+        let loglog = S::load(&mut decoder)?;
+        let c = loglog
+            .cardinality(Some(estimator.clone()))
+            .expect("failed to compute cardinality");
+        sketches.insert(file.clone(), (loglog, c));
+    }
+    Ok(sketches)
+}
+
+pub fn ull_ell_distance<F, LogLogStructure: UllEllSketch + Send + Sync, T: Float>(
+    reference_names: Vec<String>,
+    ref_sketch_file: String,
+    query_names: Vec<String>,
+    query_sketch_file: String,
+    estimator: String,
+    create_matrix: bool,
+    same_files: bool,
+    emit: F,
+) -> std::io::Result<()>
+where
+    F: Fn(Vec<(&String, &String, T)>) + Send + Sync,
+{
+    let ref_sketch_file = File::open(ref_sketch_file).expect("Failed to open file");
+    let query_sketch_file = File::open(query_sketch_file).expect("Failed to open file");
+
+    let ref_map: HashMap<String, (LogLogStructure, f64), Xxh3Builder> =
+        create_map(ref_sketch_file, &reference_names, &estimator).unwrap();
+    let query_map: HashMap<String, (LogLogStructure, f64), Xxh3Builder> =
+        create_map(query_sketch_file, &query_names, &estimator).unwrap();
+
+    let mut file_idx: HashMap<&String, usize> = HashMap::new();
+    if same_files || create_matrix {
+        let mut columns: Vec<(&String, &String, T)> = Vec::new();
+        let blank = "".to_string();
+        for (i, q_name) in query_map.keys().enumerate() {
+            if create_matrix {
+                columns.push((&blank, q_name, T::one()));
+            }
+            if same_files {
+                file_idx.insert(q_name, i);
+            }
+        }
+        if create_matrix {
+            emit(columns);
+        }
+    }
+
+    ref_map.par_iter().for_each(|(ref_name, _)| {
+        let a: f64 = ref_map[ref_name].1;
+
+        let mut ref_list: Vec<(&String, &String, T)> = Vec::new();
+        for qry_name in query_map.keys() {
+            if same_files && file_idx[qry_name] > file_idx[ref_name] {
+                continue;
+            }
+            let b: f64 = query_map[qry_name].1;
+
+            let union_count: f64 = LogLogStructure::merge(
+                &ref_map[ref_name].0,
+                &query_map[qry_name].0,
+                Some(estimator.clone()),
+            )
+            .expect("failed to merge sketches");
+
+            info!("Union: {}, a: {}, b: {}", union_count, a, b);
+
+            let similarity = (a + b - union_count) / union_count;
+            let s = if similarity < 0.0 { 0.0 } else { similarity };
+            let frac_f64 = 2.0 * s / (1.0 + s);
+
+            let frac_t: T = NumCast::from(frac_f64).expect("failed to convert f64 to T");
+
+            ref_list.push((ref_name, qry_name, frac_t));
+        }
+
+        emit(ref_list);
+    });
+
+    Ok(())
+}
+
 pub fn ull_distance <F, T: Float>(
     reference_names: Vec<String>,
     ref_sketch_file: String,
@@ -274,7 +415,101 @@ F: Fn(Vec<(&String, &String, T)>) + Send + Sync {
             let s = if similarity < 0.0 { 0.0 } else { similarity };
             let frac_f64 = 2.0 * s / (1.0 + s);
 
-            let frac_t: T = T::from(frac_f64)
+            let frac_t: T = NumCast::from(frac_f64)
+                .expect("failed to convert f64 to T");
+
+            ref_list.push((ref_name, qry_name, frac_t));
+        }
+
+        // emit a vector with same ref file
+        emit(ref_list);
+    });
+    
+    Ok(())
+}
+
+pub fn ell_distance <F, T: Float>(
+    reference_names: Vec<String>,
+    ref_sketch_file: String,
+    query_names: Vec<String>,
+    query_sketch_file: String,
+    create_matrix: bool,
+    same_files: bool,
+    emit: F,
+)-> std::io::Result<()>
+where 
+F: Fn(Vec<(&String, &String, T)>) + Send + Sync {
+
+    let ref_sketch_file = File::open(ref_sketch_file).expect("Failed to open file");
+    let query_sketch_file = File::open(query_sketch_file).expect("Failed to open file");
+
+    fn create_ell_map(
+        sketch_file: File,
+        names: &Vec<String>
+    ) -> Result<HashMap<String, (ExaLogLog, f64), Xxh3Builder>, std::io::Error>
+    {
+        let hasher = Xxh3Builder { seed: 93 };
+        let mut sketches = HashMap::with_hasher(hasher);
+        let reader = BufReader::new(sketch_file);
+        let mut decoder = Decoder::new(reader).expect("failed to create decompressor");
+        for file in names {
+            let ell = ExaLogLog::load(&mut decoder)?;
+            let c: f64 = ell.estimate();
+            sketches.insert(file.clone(), (ell, c));
+        }
+        Ok(sketches)
+    }
+
+    let ref_map =
+        create_ell_map(ref_sketch_file, &reference_names).unwrap();
+    let query_map =
+        create_ell_map(query_sketch_file, &query_names).unwrap();
+
+    let mut file_idx: HashMap<&String, usize> = HashMap::new();
+    if same_files || create_matrix {
+        let mut columns: Vec<(&String, &String, T)> = Vec::new();
+        let blank = "".to_string();
+        for (i, q_name) in query_map.keys().enumerate() {
+            // empty r_name string signals printing columns
+            if create_matrix {
+                columns.push((&blank, q_name, T::one()));
+            }
+            // used for redundant distances
+            if same_files {
+                file_idx.insert(q_name, i);
+            }
+        }
+        if create_matrix {
+            emit(columns);
+        }
+    }
+
+    ref_map.par_iter().for_each(|(ref_name, _)| {
+        // print ref name on the new line and on the left if matrix
+        let a: f64 = ref_map[ref_name].1;
+
+        let mut ref_list: Vec<(&String, &String, T)> = Vec::new();
+        // loop through query sketches (j)
+        for qry_name in query_map.keys() {
+            // for redundant distances
+            if same_files && file_idx[qry_name] > file_idx[ref_name] {
+                continue;
+            }
+            let b: f64 = query_map[qry_name].1;
+            let union_sketch =
+                ExaLogLog::merge(&ref_map[ref_name].0, &query_map[qry_name].0)
+                    .expect("failed to merge sketches");
+
+            //let union_count = union_ull.get_distinct_count_estimate();
+            let union_count: f64 = union_sketch.estimate();
+
+            info!("Union: {}, a: {}, b: {}", union_count, a, b);
+
+            let similarity = (a + b - union_count) / union_count;
+            let s = if similarity < 0.0 { 0.0 } else { similarity };
+            let frac_f64 = 2.0 * s / (1.0 + s);
+
+            let frac_t: T = NumCast::from(frac_f64)
                 .expect("failed to convert f64 to T");
 
             ref_list.push((ref_name, qry_name, frac_t));
@@ -373,10 +608,10 @@ where F: Fn(Vec<(&String, &String, T)>) + Send + Sync {
 }
 
 
-// sketch trait shared by HMH, ULL, and HLL
+// sketch trait shared by HMH, ULL, HLL, and ELL
 pub trait KmerSketch: Send {
     /// Create a new sketch
-    fn new(precision: Option<u32>) -> Self;
+    fn new(precision: Option<u32>, t: Option<u32>, d: Option<u32>) -> Self;
 
     /// Add a masked k-mer
     fn add_kmer(&mut self, masked: u64, seed: u64);
@@ -388,7 +623,7 @@ pub trait KmerSketch: Send {
 
 // HMH sketching
 impl KmerSketch for Sketch {
-    fn new(_: Option<u32>) -> Self {
+    fn new(_: Option<u32>, _: Option<u32>, _: Option<u32>) -> Self {
         Sketch::default()
     }
 
@@ -402,9 +637,26 @@ impl KmerSketch for Sketch {
     }
 }
 
+impl KmerSketch for ExaLogLog {
+    fn new(p: Option<u32>, t: Option<u32>, d: Option<u32>) -> Self {
+        let ell_p = p.expect("error with ell precision");
+        let ell_d = d.expect("error with ell d");
+        let ell_t = t.expect("error with ell t");
+        ExaLogLog::new(ell_t, ell_d, ell_p).expect("failed to create exaloglog")
+    }
+
+    fn add_kmer(&mut self, hash_value: u64, seed: u64) {
+        self.add_hash(xxh3_64_with_seed(&hash_value.to_le_bytes(), seed));
+    }
+
+    fn save<W: std::io::Write>(&self, writer: &mut W) -> Result<(), Box<dyn Error>> {
+        Ok(self.save(writer)?)
+    }
+}
+
 // sketching for HyperLogLog
 impl KmerSketch for HyperLogLog<i64> {
-    fn new(precision: Option<u32>) -> Self {
+    fn new(precision: Option<u32>, _: Option<u32>, _: Option<u32>) -> Self {
         HyperLogLog::<i64>::with_p(precision.expect("HLL needs precision") as u8)
     }
 
@@ -419,7 +671,7 @@ impl KmerSketch for HyperLogLog<i64> {
 
 // sketching for UltraLogLog
 impl KmerSketch for UltraLogLog {
-    fn new(precision: Option<u32>) -> Self {
+    fn new(precision: Option<u32>, _: Option<u32>, _: Option<u32>) -> Self {
         UltraLogLog::new(precision.expect("ULL needs precision"))
             .expect("failed to create ULL")
     }
@@ -438,6 +690,8 @@ impl KmerSketch for UltraLogLog {
 // This is simple, avoids stack overflows, and matches the “parallel by sample” request.
 pub fn sketch_files <S: KmerSketch> (
     precision: Option<u32>,
+    t: Option<u32>,
+    d: Option<u32>,
     files: Vec<String>,
     kmer_length: usize,
     output_name: String,
@@ -451,7 +705,7 @@ pub fn sketch_files <S: KmerSketch> (
         .par_iter()
         .map(|file_name| {
             let mut reader = parse_fastx_file(file_name).expect("Invalid input file");
-            let mut sketch = S::new(precision);
+            let mut sketch = S::new(precision, t, d);
 
             // looping through each sequence in file
             while let Some(res) = reader.next() {
@@ -513,7 +767,7 @@ pub fn sketch_files <S: KmerSketch> (
         .par_iter()
         .map(|file_name| {
             let mut reader = parse_fastx_file(file_name).expect("Invalid input file");
-            let mut sketch: S = S::new(precision);
+            let mut sketch: S = S::new(precision, t, d);
 
             // looping through each sequence in the file
             while let Some(res) = reader.next() {
