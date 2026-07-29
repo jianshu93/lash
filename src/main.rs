@@ -79,7 +79,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Arg::new("precision")
                 .short('p')
                 .long("precision")
-                .help("Specifiy precision, for ull and hll only.")
+                .help("Specifiy precision, for ull, hll, and ell")
                 .required(false)
                 .value_parser(clap::value_parser!(usize))
                 .default_value("10")
@@ -91,7 +91,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .help("Specifiy t, for ell only")
                 .required(false)
                 .value_parser(clap::value_parser!(u32))
-                .default_value("10")
+                .default_value("2")
                 .action(ArgAction::Set)
             )
             .arg(
@@ -100,7 +100,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .help("Specifiy d, for ell only")
                 .required(false)
                 .value_parser(clap::value_parser!(u32))
-                .default_value("10")
+                .default_value("24")
                 .action(ArgAction::Set)
             )
             .arg(

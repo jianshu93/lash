@@ -1,6 +1,6 @@
 [![Latest Version](https://img.shields.io/crates/v/lash-rs?style=for-the-badge&color=mediumpurple&logo=rust)](https://crates.io/crates/lash-rs)
 
-# Fast and Memory Efficient Genome/Metagenome Sketching via HyperMinHash, HyperLogLog, and UltraLogLog
+# Fast and Memory Efficient Genome/Metagenome Sketching via HyperMinHash, HyperLogLog, UltraLogLog, and ExaLogLog
 
 This is a software for genome sketching and distance approximation in LogLog space. Thus, it is named LASH (**L**oglog h**ASH**)
 
@@ -11,7 +11,7 @@ This is a software for genome sketching and distance approximation in LogLog spa
 ### Description ###
 Genome sketching can be extremely accurate but requires a huge amount of memory for MinHash-like algorithms. Recently, a new algorithm combining MinHash and HyperLogLog, called HyperMinHash was invented (1), which can perform MinHash in loglog space, a significant decrease in space/memory requirement. Together with [lukaslueg](https://github.com/lukaslueg), we first created a Rust library [hyperminhash](https://github.com/lukaslueg/hyperminhash) and then combined rolling hashing with HyperMinHash for extremely fast processing of genomic sequences. 
 
-We also included the HyperLogLog algorithm (2), implemented  from the library [streaming_algorithms](https://github.com/jianshu93/streaming_algorithms/tree/master). HyperLogLog is more space efficient than HyperMinHash, though not as space efficient as UltraLogLog (3), another option included. Both use hashing algorithms that transform elements into a binary number, where the number of leading 0s is kept track of to estimate cardinality. UltraLogLog can be up to 28% more space efficient than HyperLogLog due to a better sketch structure and estimator. It also has better compaction when using compressing algorithms (e.g., zstd). Ultraloglog was implemented with [waynexia](https://github.com/waynexia), see [ultraloglog](https://github.com/waynexia/ultraloglog). 
+LASH also includes sketching algorithms from the HyperLogLog family, consisting of HyperLogLog (HLL), UltraLogLog (ULL), and ExaLogLog (ELL). The HLL algorithm (2) is implemented  from the library [streaming_algorithms](https://github.com/jianshu93/streaming_algorithms/tree/master). HyperLogLog is more space efficient than HyperMinHash, though not as space efficient as ULL (3) or ELL (4), the other options included. HLL, ULL, and ELL all use hashing algorithms that transform elements into a binary number, where the number of leading 0s is kept track of to estimate cardinality. UltraLogLog can be up to 28% more space efficient than HyperLogLog due to a better sketch structure and estimator. It also has better compaction when using compressing algorithms (e.g., zstd). Ultraloglog was implemented with [waynexia](https://github.com/waynexia), see [ultraloglog](https://github.com/waynexia/ultraloglog). Similarly, ExaLogLog (4) is a more space efficient version of UltraLogLog, saving up to 43% of space comapred to HyperLogLog. 
 
 We employed a simple producer-consumer model to also reduce memory requirement for large files, e.g., metagenomic files. Both sketching and distance computation are parallelized to make full use of all CPU threads/cores. Xxhash3 was used as the underlying hashing technique. 
 
@@ -73,9 +73,11 @@ Options:
   -o, --output <output>        Input a prefix/name for your output files [default: sketch]
   -k, --kmer <kmer_length>     Length of the kmer [default: 16]
   -t, --threads <threads>      Number of threads to use, default to all logical cores
-  -a, --algorithm <algorithm>  Which algorithm to use: HyperMinHash (hmh), UltraLogLog (ull), or HyperLogLog (hll) [default: hmh]
-  -p, --precision <precision>  Specifiy precision, for ull and hll only. [default: 10]
+  -a, --algorithm <algorithm>  Which algorithm to use: HyperMinHash (hmh), UltraLogLog (ull), HyperLogLog (hll), or ExaLogLog (ell) [default: hmh]
+  -p, --precision <precision>  Specifiy precision, for ull, hll, and ell. [default: 10]
   -s, --seed <seed>            Random seed [default: 42]
+  --d_ell  <d>                 d, for ExaLogLog [default: 24]
+  --t_ell  <t>                 t, for ExaLogLog [default: 2]
   -h, --help                   Print help
                        
 
@@ -114,4 +116,5 @@ Output format is the same with Mash/BinDash, first column query, second column r
 ## References
 1. Yu YW, Weber GM. Hyperminhash: Minhash in loglog space. IEEE Transactions on Knowledge and Data Engineering. 2020 Mar 17;34(1):328-39.
 2. Flajolet P, Fusy É, Gandouet O, Meunier F. HyperLogLog: the analysis of a near-optimal cardinality estimation algorithm. Discrete Mathematics & Theoretical Computer Science, Proceedings of the 2007 Conference on Analysis of Algorithms (AofA 07). 2007;AH:127–46.
-3. Ertl O. UltraLogLog: A Practical and More Space-Efficient Alternative to HyperLogLog for Approximate Distinct Counting. Proceedings of the VLDB Endowment. 2024 March 1;17(7):1655-1668. 
+3. Ertl O. UltraLogLog: A Practical and More Space-Efficient Alternative to HyperLogLog for Approximate Distinct Counting. Proceedings of the VLDB Endowment. 2024 March 1;17(7):1655-1668.
+4. Ertl, O., 2024. ExaLogLog: Space-Efficient and Practical Approximate Distinct Counting up to the Exa-Scale. arXiv preprint arXiv:2402.13726.
