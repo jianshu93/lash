@@ -100,7 +100,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .help("Specifiy d, for ell only")
                 .required(false)
                 .value_parser(clap::value_parser!(u32))
-                .default_value("24")
+                .default_value("20")
                 .action(ArgAction::Set)
             )
             .arg(

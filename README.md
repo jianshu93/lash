@@ -76,7 +76,7 @@ Options:
   -a, --algorithm <algorithm>  Which algorithm to use: HyperMinHash (hmh), UltraLogLog (ull), HyperLogLog (hll), or ExaLogLog (ell) [default: hmh]
   -p, --precision <precision>  Specifiy precision, for ull, hll, and ell. [default: 10]
   -s, --seed <seed>            Random seed [default: 42]
-  --d_ell  <d>                 d, for ExaLogLog [default: 24]
+  --d_ell  <d>                 d, for ExaLogLog [default: 20]
   --t_ell  <t>                 t, for ExaLogLog [default: 2]
   -h, --help                   Print help
                        
