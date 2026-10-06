@@ -721,11 +721,10 @@ dependencies = [
 
 [[package]]
 name = "hyperminhash"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b28db001b6f69b4a5649627759c93f2f8c0f4ee2a2ab16b221efaadd40f09181"
+version = "0.2.5"
+source = "git+https://github.com/jianshu93/hyperminhash#4ae7cc41339960b59f8d1b96095dca7ef0d197fe"
 dependencies = [
- "byteorder",
+ "serde",
  "xxhash-rust",
 ]
 

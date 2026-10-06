@@ -207,7 +207,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             rayon::ThreadPoolBuilder::new()
                 .num_threads(threads.max(1))
-                .stack_size(64 * 1024 * 1024)
+                //.stack_size(64 * 1024 * 1024)
                 .build_global()
                 .unwrap();
 
