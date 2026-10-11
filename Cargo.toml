@@ -21,7 +21,7 @@ hashbrown = { version = "0.15", features = ["rayon", "serde"]}
 hashers = "1.0"
 crossbeam-channel = "0.5"
 xxhash-rust = "0.8"
-hyperminhash = { git = "https://github.com/jianshu93/hyperminhash", features = ["serialize"]}
+hyperminhash = { package = "hyperminhash-rs", git = "https://github.com/jianshu93/HyperMinHash-rs", features = ["serialize"]}
 log = { version = "0.4" }
 env_logger = { version = "0.11" }
 byteorder = { version = "1.5", optional = true }
