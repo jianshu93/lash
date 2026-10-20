@@ -412,7 +412,7 @@ where F: Fn(Vec<(&String, &String, T)>) + Send + Sync {
 // sketch trait shared by HMH, ULL, HLL, and ELL
 pub trait KmerSketch: Send {
     /// Create a new sketch
-    fn new(precision: Option<u32>, t: Option<u32>, d: Option<u32>) -> Self;
+    fn new(precision: u32, t: Option<u32>, d: Option<u32>) -> Self;
 
     /// Add a masked k-mer
     fn add_kmer(&mut self, masked: u64, seed: u64);
@@ -424,8 +424,8 @@ pub trait KmerSketch: Send {
 
 // HMH sketching
 impl KmerSketch for Sketch {
-    fn new(_: Option<u32>, _: Option<u32>, _: Option<u32>) -> Self {
-        Sketch::default()
+    fn new(p: u32, _: Option<u32>, _: Option<u32>) -> Self {
+        Sketch::with_precision(p).expect("Error in precision for HMH")
     }
 
     fn add_kmer(&mut self, masked: u64, seed: u64) {
@@ -439,11 +439,11 @@ impl KmerSketch for Sketch {
 }
 
 impl KmerSketch for ExaLogLog {
-    fn new(p: Option<u32>, t: Option<u32>, d: Option<u32>) -> Self {
-        let ell_p = p.expect("error with ell precision");
+    fn new(p: u32, t: Option<u32>, d: Option<u32>) -> Self {
+        //let ell_p = p.expect("error with ell precision");
         let ell_d = d.expect("error with ell d");
         let ell_t = t.expect("error with ell t");
-        ExaLogLog::new(ell_t, ell_d, ell_p).expect("failed to create exaloglog")
+        ExaLogLog::new(ell_t, ell_d, p).expect("failed to create exaloglog")
     }
 
     fn add_kmer(&mut self, hash_value: u64, seed: u64) {
@@ -457,8 +457,8 @@ impl KmerSketch for ExaLogLog {
 
 // sketching for HyperLogLog
 impl KmerSketch for HyperLogLog<i64> {
-    fn new(precision: Option<u32>, _: Option<u32>, _: Option<u32>) -> Self {
-        HyperLogLog::<i64>::with_p(precision.expect("HLL needs precision") as u8)
+    fn new(precision: u32, _: Option<u32>, _: Option<u32>) -> Self {
+        HyperLogLog::<i64>::with_p(precision as u8)
     }
 
     fn add_kmer(&mut self, masked: u64, seed: u64) {
@@ -472,8 +472,8 @@ impl KmerSketch for HyperLogLog<i64> {
 
 // sketching for UltraLogLog
 impl KmerSketch for UltraLogLog {
-    fn new(precision: Option<u32>, _: Option<u32>, _: Option<u32>) -> Self {
-        UltraLogLog::new(precision.expect("ULL needs precision"))
+    fn new(precision: u32, _: Option<u32>, _: Option<u32>) -> Self {
+        UltraLogLog::new(precision)
             .expect("failed to create ULL")
     }
 
@@ -490,7 +490,7 @@ impl KmerSketch for UltraLogLog {
 // Each file is processed to completion in its own task (no inner parallelism / no channels).
 // This is simple, avoids stack overflows, and matches the “parallel by sample” request.
 pub fn sketch_files <S: KmerSketch> (
-    precision: Option<u32>,
+    precision: u32,
     t: Option<u32>,
     d: Option<u32>,
     files: Vec<String>,

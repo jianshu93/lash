@@ -79,7 +79,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 Arg::new("precision")
                 .short('p')
                 .long("precision")
-                .help("Specifiy precision, for ull, hll, and ell")
+                .help("Specifiy precision, default 14 for HMH, 10 otherwise")
                 .required(false)
                 .value_parser(clap::value_parser!(usize))
                 .default_value("10")
@@ -207,7 +207,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
             rayon::ThreadPoolBuilder::new()
                 .num_threads(threads.max(1))
-                //.stack_size(64 * 1024 * 1024)
                 .build_global()
                 .unwrap();
 
@@ -230,8 +229,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             let result: Result<(), Box<dyn Error>>;
             if alg == "hmh" {
                 // create hypermash object and sketch
+                let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&14) as u32;
                 result = sketch_files::<Sketch> (
-                    None,
+                    precision,
                     None,
                     None,
                     files,
@@ -244,7 +244,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             } else if alg == "hll" {
                 let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
                 result = sketch_files::<HyperLogLog<i64>>(
-                    Some(precision),
+                    precision,
                     None,
                     None,
                     files,
@@ -257,7 +257,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             } else if alg == "ull" {
                 let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
                 result = sketch_files::<UltraLogLog>(
-                    Some(precision),
+                    precision,
                     None,
                     None,
                     files,
@@ -269,10 +269,10 @@ fn main() -> Result<(), Box<dyn Error>> {
                 );
             } else if alg == "ell" {
                 let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
-                let d = *s_matches.get_one::<u32>("d_ell").unwrap_or(&10);
-                let t = *s_matches.get_one::<u32>("t_ell").unwrap_or(&10);
+                let d = *s_matches.get_one::<u32>("d_ell").unwrap_or(&20);
+                let t = *s_matches.get_one::<u32>("t_ell").unwrap_or(&2);
                 result = sketch_files::<ExaLogLog>(
-                    Some(precision),
+                    precision,
                     Some(t), 
                     Some(d),
                     files,
