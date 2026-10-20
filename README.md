@@ -74,7 +74,7 @@ Options:
   -k, --kmer <kmer_length>     Length of the kmer [default: 16]
   -t, --threads <threads>      Number of threads to use, default to all logical cores
   -a, --algorithm <algorithm>  Which algorithm to use: HyperMinHash (hmh), UltraLogLog (ull), HyperLogLog (hll), or ExaLogLog (ell) [default: hmh]
-  -p, --precision <precision>  Specifiy precision, for ull, hll, and ell. [default: 10]
+  -p, --precision <precision>  Specifiy precision, for ull, hll, and ell. [default: 14 for hmh, 10 otherwise]
   -s, --seed <seed>            Random seed [default: 42]
   --d_ell  <d>                 d, for ExaLogLog [default: 20]
   --t_ell  <t>                 t, for ExaLogLog [default: 2]

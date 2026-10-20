@@ -82,7 +82,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .help("Specifiy precision, default 14 for HMH, 10 otherwise")
                 .required(false)
                 .value_parser(clap::value_parser!(usize))
-                .default_value("10")
+                //.default_value("10")
                 .action(ArgAction::Set)
             )
             .arg(
@@ -227,9 +227,16 @@ fn main() -> Result<(), Box<dyn Error>> {
             
 
             let result: Result<(), Box<dyn Error>>;
+
+            let precision: u32;
+            if alg == "hmh" {
+                precision = *s_matches.get_one::<usize>("precision").unwrap_or(&14) as u32;
+            }
+            else {
+                precision = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
+            }
             if alg == "hmh" {
                 // create hypermash object and sketch
-                let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&14) as u32;
                 result = sketch_files::<Sketch> (
                     precision,
                     None,
@@ -242,7 +249,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                     aa
                 );
             } else if alg == "hll" {
-                let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
                 result = sketch_files::<HyperLogLog<i64>>(
                     precision,
                     None,
@@ -255,7 +261,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                     aa
                 );
             } else if alg == "ull" {
-                let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
                 result = sketch_files::<UltraLogLog>(
                     precision,
                     None,
@@ -268,7 +273,6 @@ fn main() -> Result<(), Box<dyn Error>> {
                     aa
                 );
             } else if alg == "ell" {
-                let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
                 let d = *s_matches.get_one::<u32>("d_ell").unwrap_or(&20);
                 let t = *s_matches.get_one::<u32>("t_ell").unwrap_or(&2);
                 result = sketch_files::<ExaLogLog>(
@@ -297,7 +301,6 @@ fn main() -> Result<(), Box<dyn Error>> {
             // parameter JSONs
             let params;
             if alg == "ull" || alg == "hll" {
-                let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
                 params = json!({
                     "k": kmer_length.to_string(),
                     "algorithm": alg,
@@ -309,12 +312,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                 params = json!({
                     "k": kmer_length.to_string(),
                     "algorithm": alg,
+                    "precision": precision.to_string(),
                     "seed": seed.to_string(),
                     "molecule": molecule_param
                 });
             } 
             else {
-                let precision: u32 = *s_matches.get_one::<usize>("precision").unwrap_or(&10) as u32;
                 let d = *s_matches.get_one::<u32>("d_ell").unwrap_or(&10);
                 let t = *s_matches.get_one::<u32>("t_ell").unwrap_or(&10);
                 params = json!({
