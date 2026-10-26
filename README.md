@@ -44,7 +44,7 @@ cargo build --release
 
 ```bash
 $ lash -h
-Fast and Memory Efficient (Meta)genome Sketching via HyperLogLog, HyperMinhash and UltraLogLog
+Fast and Memory Efficient (Meta)genome Sketching via HyperLogLog, HyperMinhash, UltraLogLog, and ExaLogLog
 
 Usage: lash [COMMAND]
 
