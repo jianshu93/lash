@@ -1,3 +1,13 @@
+[![install with bioconda](https://img.shields.io/badge/install%20with-bioconda-brightgreen.svg?style=flat)](http://bioconda.github.io/recipes/lash/README.html)
+![](https://anaconda.org/bioconda/lash/badges/license.svg)
+![](https://anaconda.org/bioconda/lash/badges/version.svg)
+![](https://anaconda.org/bioconda/lash/badges/latest_release_relative_date.svg)
+![](https://anaconda.org/bioconda/lash/badges/platforms.svg)
+[![install with conda](https://anaconda.org/bioconda/lash/badges/downloads.svg)](https://anaconda.org/bioconda/lash)
+
+[![Crates.io](https://img.shields.io/crates/v/lash-rs.svg)](https://crates.io/crates/lash-rs)
+
+
 [![Latest Version](https://img.shields.io/crates/v/lash-rs?style=for-the-badge&color=mediumpurple&logo=rust)](https://crates.io/crates/lash-rs)
 
 # Fast and Memory Efficient Genome/Metagenome Sketching via HyperMinHash, HyperLogLog, UltraLogLog, and ExaLogLog
@@ -7,6 +17,14 @@ This is a software for genome sketching and distance approximation in LogLog spa
 <div align="center">
   <img width="30%" src ="lash-logo.png">
 </div>
+
+
+### Quick install (Linux)
+```bash
+conda install -c bioconda -c conda-forge lash
+lash -h
+```
+
 
 ### Description ###
 Genome sketching can be extremely accurate but requires a huge amount of memory for MinHash-like algorithms. Recently, a new algorithm combining MinHash and HyperLogLog, called HyperMinHash was invented (1), which can perform MinHash in loglog space, a significant decrease in space/memory requirement. We first created a Rust library [hyperminhash](https://github.com/jianshu93/HyperMinHash-rs) and then combined rolling hashing with HyperMinHash for extremely fast processing of genomic sequences. 
@@ -19,7 +37,7 @@ There are two main subcommands, sketch and dist. Sketch is the sketching command
 
 We hope that you find this tool helpful in your scientific endeavors!
 
-## Quick install
+## Install
 ```bash
 ### pre-compiled binary for Linux
 wget https://github.com/jianshu93/lash/releases/download/v0.1.4/lash_Linux_x86-64_v0.1.4.zip
