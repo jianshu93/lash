@@ -19,7 +19,7 @@ This is a software for genome sketching and distance approximation in LogLog spa
 </div>
 
 
-### Quick install (Linux)
+### Quick install (Linux and MacOS)
 ```bash
 conda install -c bioconda -c conda-forge lash
 lash -h
