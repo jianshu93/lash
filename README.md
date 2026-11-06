@@ -40,8 +40,8 @@ We hope that you find this tool helpful in your scientific endeavors!
 ## Install
 ```bash
 ### pre-compiled binary for Linux
-wget https://github.com/jianshu93/lash/releases/download/v0.1.4/lash_Linux_x86-64_v0.1.4.zip
-unzip lash_Linux_x86-64_v0.1.4.zip
+wget https://github.com/jianshu93/lash/releases/download/v0.1.10/lash_Linux_x86-64_v0.1.10.zip
+unzip lash_Linux_x86-64_v0.1.10.zip
 chmod a+x ./lash
 ./lash -h
 
