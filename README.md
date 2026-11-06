@@ -42,7 +42,7 @@ We hope that you find this tool helpful in your scientific endeavors!
 ### pre-compiled binary for Linux
 wget https://github.com/jianshu93/lash/releases/download/v0.1.4/lash_Linux_x86-64_v0.1.4.zip
 unzip lash_Linux_x86-64_v0.1.4.zip
-chomd a+x ./lash
+chmod a+x ./lash
 ./lash -h
 
 ### Install from cargo, install cargo first here: https://rustup.rs, cargo will be installed by default
