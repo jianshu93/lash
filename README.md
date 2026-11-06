@@ -40,9 +40,9 @@ We hope that you find this tool helpful in your scientific endeavors!
 ## Install
 ```bash
 ### pre-compiled binary for Linux
-wget https://github.com/jianshu93/lash/releases/download/v0.1.10/lash_Linux_x86-64_v0.1.10.zip
-unzip lash_Linux_x86-64_v0.1.10.zip
-chmod a+x ./lash
+wget https://github.com/jianshu93/lash/releases/download/v0.1.4/lash_Linux_x86-64_v0.1.4.zip
+unzip lash_Linux_x86-64_v0.1.4.zip
+chomd a+x ./lash
 ./lash -h
 
 ### Install from cargo, install cargo first here: https://rustup.rs, cargo will be installed by default
@@ -122,8 +122,9 @@ Options:
 ```bash
 ls ./data/*.fasta > query_list_strep.txt
 ls ./data/*.fasta > ref_list_strep.txt
-lash sketch --query_file ./query_list_strep.txt -r ref_list_strep.txt -k 16 -o skh
-lash dist -q ./skh -r ./skh -t 8 -o dist
+lash sketch -f ./query_list_strep.txt -k 16 -o qry_skh
+lash sketch -f ./query_list_strep.txt -k 16 -o ref_skh
+lash dist -q ./qry_skh -r ./ref_skh -t 8 -o dist.txt
 
 ```
 
