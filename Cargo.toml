@@ -8,10 +8,16 @@ license = "MIT OR Apache-2.0"
 description = "Genome/Metagenome sketching via, HyperLogLog, HyperMinHash and UltraLogLog"
 
 [[bin]]
-
 name = "lash"
 path = "src/main.rs"
 
+[[example]]
+name = "mvp"
+path = "src/bench/mvp.rs"
+
+[[example]]
+name = "cardinality_truth"
+path = "src/bench/cardinality_truth.rs"
 
 [dependencies]
 clap = "4.3"
@@ -36,3 +42,4 @@ ultraloglog = { version = "0.1.6" , features = ["serde"]}
 num_cpus = "1.13"
 zstd = { version = "0.13", features = ["zstdmt"] }
 num-traits = "0.2.19"
+rand = "0.10.4"
