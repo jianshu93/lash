@@ -205,15 +205,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     
 
-    fn rmse(errors: Vec<f64>) -> f64 {
+    fn variance(errors: Vec<f64>) -> f64 {
         let sum = errors.iter().sum::<f64>() / errors.len() as f64;
-        sum.powf(0.5)
+        sum
     }
 
     writeln!(writer, "**************** RMSE results ****************").expect("error writing to log file");
-    writeln!(writer, "hll rmse: {}", rmse(hll_errors)).expect("error writing hll rmse");
-    writeln!(writer, "ull rmse: {}", rmse(ull_errors)).expect("error writing ull rmse");
-    writeln!(writer, "ell rmse: {}", rmse(ell_errors)).expect("error writing ell rmse");
+    writeln!(writer, "hll variance: {}", variance(hll_errors)).expect("error writing hll rmse");
+    writeln!(writer, "ull variance: {}", variance(ull_errors)).expect("error writing ull rmse");
+    writeln!(writer, "ell variance: {}", variance(ell_errors)).expect("error writing ell rmse");
 
     Ok(())
 }
