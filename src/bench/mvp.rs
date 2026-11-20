@@ -15,6 +15,7 @@ use ultraloglog::{Estimator, MaximumLikelihoodEstimator, UltraLogLog};
 use needletail::parse_fastx_file;
 use rayon::prelude::*;
 use xxhash_rust::xxh3::xxh3_64_with_seed;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub fn mask_bits(v: u64, k: usize) -> u64 {
     let b = 2 * k as u32;
@@ -51,17 +52,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             .short('s')
             .long("seeds")
             .help("Number of random seeds to simulate")
-            .default_value("20")
+            .default_value("10")
             .value_parser(clap::value_parser!(usize))
-            .action(ArgAction::Set),
-        )
-        .arg(
-            Arg::new("cardinality")
-            .short('c')
-            .long("cardinality")
-            .help("True cardinality of genome set")
-            .required(true)
-            .value_parser(clap::value_parser!(f64))
             .action(ArgAction::Set),
         )
         .arg(
@@ -75,7 +67,6 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let input_file = matches.get_one::<String>("file").expect("required");
     let output_file = matches.get_one::<String>("output").expect("required");
-    let cardinality = *matches.get_one::<f64>("cardinality").expect("required");
     let num_seeds: usize = *matches.get_one::<usize>("seeds").expect("required");
 
     if num_seeds > 100 {
@@ -102,118 +93,132 @@ fn main() -> Result<(), Box<dyn Error>> {
     }; 
 
     let mut writer = BufWriter::new(File::create(output_file)?);
-    let mut hll_errors = Vec::<f64>::with_capacity(num_seeds);
-    let mut ull_errors = Vec::<f64>::with_capacity(num_seeds);
-    let mut ell_errors = Vec::<f64>::with_capacity(num_seeds);
-
-    let mut i = 0; // keep track of seed index, save sketches of the last seed only
-
-    // calculate cardinality and squared error for each seed
-    for seed in seeds {
-        writeln!(writer, "---------------- seed {} ----------------", seed).expect("error writing to file");
-        let hll = Mutex::new(HyperLogLog::<i64>::with_p(10));
-        let ull = Mutex::new(UltraLogLog::new(10).expect("error creating ull"));
-        let ell = Mutex::new(ExaLogLog::new(2, 20, 10).expect("error creating ell"));
-
-
-        const CAPACITY: usize = 1 << 20; // max capacity of vector holding hashed values
-
-        // adds all entries in the vector to hll, ull, and ell. clears vector
-        let flush = |buf: &mut Vec<u64>| {
-            let mut h = hll.lock().unwrap();
-            let mut u = ull.lock().unwrap();
-            let mut e = ell.lock().unwrap();
-            for &x in buf.iter() {
-                h.push_hash64(x);
-                u.add(x);
-                e.add_hash(x);
-            }
-            buf.clear();
-        };
-
-        // sketch hll, ell, and ull into one big sketch
-        files
-            .par_iter()
-            .for_each(|file_name| {
-                let mut reader = parse_fastx_file(file_name).expect("Invalid input file");
-                let mut buf: Vec<u64> = Vec::with_capacity(CAPACITY);
-
-                // looping through each sequence in file. k=16
-                while let Some(res) = reader.next() {
-                    if let Ok(seqrec) = res {
-                        let seq = filter_out_n(seqrec.seq().as_ref());
-                        let kseq = KSeq::new(&seq, 2);
-                        
-                        let mut it =
-                            KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
-                        while let Some(km) = it.next() {
-                            let canon = km.min(km.reverse_complement());
-                            let masked = mask_bits(
-                                canon.get_compressed_value() as u64,
-                                16,
-                            );
-
-                            buf.push(xxh3_64_with_seed(&masked.to_le_bytes(), seed as u64));
-
-                            if buf.len() >= CAPACITY {
-                                flush(&mut buf);
-                            }
-                        }
-                        flush(&mut buf);
-                    }
-                    
-                }
-            });
-        
-        let hll_card = hll.lock().unwrap().len();
-        let ell_card = ell.lock().unwrap().estimate();
-        let ull_card = MaximumLikelihoodEstimator.estimate(&ull.lock().unwrap());
-
-        // relative squared error
-        fn squared_error(est: f64, truth: f64) -> f64 {
-            ((est - truth) / truth).powi(2)
-        }
-        
-        let hll_err = squared_error(hll_card, cardinality);
-        let ull_err = squared_error(ull_card, cardinality);
-        let ell_err = squared_error(ell_card, cardinality);
-        
-        writeln!(writer, "hll cardinality: {}, error: {}", hll_card, hll_err).expect("error writing hll result");
-        writeln!(writer, "ull cardinality: {}, error: {}", ull_card, ull_err).expect("error writing ull result");
-        writeln!(writer, "ell cardinality: {}, error: {}", ell_card, ell_err).expect("error writing ull result");
-
-        hll_errors.push(hll_err);
-        ull_errors.push(ull_err);
-        ell_errors.push(ell_err);
-        
-        i = i + 1;
-
-        // serialize sketches. they are not compressed here. 
-        if i == num_seeds { // if we are on the last seed, save it so we know the file size
-            let mut writer = BufWriter::new(File::create("hll_sketch.bin")?);
-            hll.lock().unwrap().save(&mut writer)?;
-            writer.flush()?;
-
-            let mut writer = BufWriter::new(File::create("ull_sketch.bin")?);
-            ull.lock().unwrap().save(&mut writer)?;
-            writer.flush()?;
-
-            let mut writer = BufWriter::new(File::create("ell_sketch.bin")?);
-            ell.lock().unwrap().save(&mut writer)?;
-            writer.flush()?;
-        }
-    }
     
 
-    fn variance(errors: Vec<f64>) -> f64 {
-        let sum = errors.iter().sum::<f64>() / errors.len() as f64;
-        sum
+    // keeps track of true unique count
+    let seen: Vec<AtomicU64> = (0..(1usize << 26)).map(|_| AtomicU64::new(0)).collect();
+
+    // vectors for each sketchs
+    let mut hlls: Vec<Mutex<HyperLogLog<i64>>> = Vec::with_capacity(num_seeds);
+    let mut ulls: Vec<Mutex<UltraLogLog>> = Vec::with_capacity(num_seeds);
+    let mut ells: Vec<Mutex<ExaLogLog>> = Vec::with_capacity(num_seeds);
+
+    // fill the vectors: one sketch of each type per seed
+    for _ in 0..num_seeds {
+        hlls.push(Mutex::new(HyperLogLog::<i64>::with_p(10)));
+        ulls.push(Mutex::new(UltraLogLog::new(10).expect("error creating ull")));
+        ells.push(Mutex::new(ExaLogLog::new(2, 20, 10).expect("error creating ell")));
     }
 
-    writeln!(writer, "**************** RMSE results ****************").expect("error writing to log file");
-    writeln!(writer, "hll variance: {}", variance(hll_errors)).expect("error writing hll rmse");
-    writeln!(writer, "ull variance: {}", variance(ull_errors)).expect("error writing ull rmse");
-    writeln!(writer, "ell variance: {}", variance(ell_errors)).expect("error writing ell rmse");
+    const CAPACITY: usize = 1 << 20;
 
+    let flush = |buf: &mut Vec<u64>| {
+        for (j, seed) in seeds.iter().enumerate() {
+            // hash outside the locks
+            let hashes: Vec<u64> = buf
+                .iter()
+                .map(|&m| xxh3_64_with_seed(&m.to_le_bytes(), *seed as u64))
+                .collect();
+
+                let mut h = hlls[j].lock().unwrap();
+                for &x in &hashes { h.push_hash64(x); }
+            
+                let mut u = ulls[j].lock().unwrap();
+                for &x in &hashes { u.add(x); }
+            
+                let mut e = ells[j].lock().unwrap();
+                for &x in &hashes { e.add_hash(x); }
+        }
+        buf.clear();
+    };
+
+    files.par_iter().for_each(|file_name| {
+        let mut reader = parse_fastx_file(file_name).expect("Invalid input file");
+        let mut buf: Vec<u64> = Vec::with_capacity(CAPACITY);
+        while let Some(res) = reader.next() {
+            if let Ok(seqrec) = res {
+                let seq = filter_out_n(seqrec.seq().as_ref());
+                if seq.len() < 16 {
+                    continue;
+                }
+
+                let kseq = KSeq::new(&seq, 2);
+                let mut it = KmerSeqIterator::<Kmer16b32bit>::new(16, &kseq);
+                while let Some(km) = it.next() {
+                    let canon = km.min(km.reverse_complement());
+                    let masked = mask_bits(
+                        canon.get_compressed_value() as u64,
+                        16,
+                    );
+                    let m = masked as usize;
+                    seen[m >> 6].fetch_or(1u64 << (m & 63), Ordering::Relaxed);
+                    buf.push(masked);
+                    if buf.len() >= CAPACITY { flush(&mut buf); }
+                }
+            }
+        }
+        flush(&mut buf); // once per file
+    });
+    
+    // write files
+    let mut sketch_writer = BufWriter::new(File::create("hll_sketch.bin")?);
+    hlls[0].lock().unwrap().save(&mut sketch_writer)?;
+    sketch_writer.flush()?;
+
+    let mut sketch_writer = BufWriter::new(File::create("ull_sketch.bin")?);
+    ulls[0].lock().unwrap().save(&mut sketch_writer)?;
+    sketch_writer.flush()?;
+
+    let mut sketch_writer = BufWriter::new(File::create("ell_sketch.bin")?);
+    ells[0].lock().unwrap().save(&mut sketch_writer)?;
+    sketch_writer.flush()?;
+
+    let mut hll_cards = Vec::<f64>::new();
+    let mut ull_cards = Vec::<f64>::new();
+    let mut ell_cards = Vec::<f64>::new();
+
+    for i in 0..num_seeds {
+        writeln!(writer, "-------------- seed number {} --------------", i).expect("error writing to output");
+        let hll_card = hlls[i].lock().unwrap().len();
+        writeln!(writer, "hll cardinality: {}", hll_card).expect("error writing hll result");
+        hll_cards.push(hll_card);
+
+        let ull_card = MaximumLikelihoodEstimator.estimate(&ulls[i].lock().unwrap());
+        writeln!(writer, "ull cardinality: {}", ull_card).expect("error writing ull result");
+        ull_cards.push(ull_card);
+
+        let ell_card = ells[i].lock().unwrap().estimate();
+        writeln!(writer, "ell cardinality: {}", ell_card).expect("error writing ell result");
+        ell_cards.push(ell_card);
+    }
+    
+    // calculate true cardinality
+    let true_unique: u64 = seen
+    .iter()
+    .map(|w| w.load(Ordering::Relaxed).count_ones() as u64)
+    .sum();
+
+    writeln!(writer, "**************** True cardinality: {} ****************", true_unique).expect("error writing to file");
+
+    fn variance(estimates: Vec<f64>, truth: f64) -> f64 {
+        let n = estimates.len() as f64;
+        let ratios: Vec<f64> = estimates.iter().map(|e| e / truth).collect();
+        let mean = ratios.iter().sum::<f64>() / n;
+        ratios.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / n
+    }
+
+    let var_hll = variance(hll_cards, true_unique as f64);
+    let var_ull = variance(ull_cards, true_unique as f64);
+    let var_ell = variance(ell_cards, true_unique as f64);
+
+    writeln!(writer, "**************** Variance results ****************").expect("error writing to log file");
+    writeln!(writer, "hll variance: {}", var_hll).expect("error writing hll var");
+    writeln!(writer, "ull variance: {}", var_ull).expect("error writing ull var");
+    writeln!(writer, "ell variance: {}", var_ell).expect("error writing ell var");
+
+    writeln!(writer, "**************** MVP results ****************").expect("error writing mvp");
+    writeln!(writer, "hll mvp: {}", var_hll * 2i32.pow(10) as f64 * 6.0).expect("error writing hll var");
+    writeln!(writer, "ull mvp: {}", var_ull * 2i32.pow(10) as f64* 8.0).expect("error writing hll var");
+    writeln!(writer, "ell mvp: {}", var_ell * 2i32.pow(10) as f64 * 28.0).expect("error writing hll var");
     Ok(())
 }
