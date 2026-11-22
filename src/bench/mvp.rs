@@ -200,25 +200,23 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     writeln!(writer, "**************** True cardinality: {} ****************", true_unique).expect("error writing to file");
 
-    fn variance(estimates: Vec<f64>, truth: f64) -> f64 {
+    fn mse(estimates: Vec<f64>, truth: f64) -> f64 {
         let n = estimates.len() as f64;
-        let ratios: Vec<f64> = estimates.iter().map(|e| e / truth).collect();
-        let mean = ratios.iter().sum::<f64>() / n;
-        ratios.iter().map(|r| (r - mean).powi(2)).sum::<f64>() / n
+        estimates.iter().map(|e| ((e - truth) / truth).powi(2)).sum::<f64>() / n
     }
 
-    let var_hll = variance(hll_cards, true_unique as f64);
-    let var_ull = variance(ull_cards, true_unique as f64);
-    let var_ell = variance(ell_cards, true_unique as f64);
+    let var_hll = mse(hll_cards, true_unique as f64);
+    let var_ull = mse(ull_cards, true_unique as f64);
+    let var_ell = mse(ell_cards, true_unique as f64);
 
-    writeln!(writer, "**************** Variance results ****************").expect("error writing to log file");
-    writeln!(writer, "hll variance: {}", var_hll).expect("error writing hll var");
-    writeln!(writer, "ull variance: {}", var_ull).expect("error writing ull var");
-    writeln!(writer, "ell variance: {}", var_ell).expect("error writing ell var");
+    writeln!(writer, "**************** MSE results ****************").expect("error writing to log file");
+    writeln!(writer, "hll mse: {}", var_hll).expect("error writing hll mse");
+    writeln!(writer, "ull mse: {}", var_ull).expect("error writing ull mse");
+    writeln!(writer, "ell mse: {}", var_ell).expect("error writing ell mse");
 
     writeln!(writer, "**************** MVP results ****************").expect("error writing mvp");
-    writeln!(writer, "hll mvp: {}", var_hll * 2i32.pow(10) as f64 * 6.0).expect("error writing hll var");
-    writeln!(writer, "ull mvp: {}", var_ull * 2i32.pow(10) as f64* 8.0).expect("error writing hll var");
-    writeln!(writer, "ell mvp: {}", var_ell * 2i32.pow(10) as f64 * 28.0).expect("error writing hll var");
+    writeln!(writer, "hll mvp: {}", var_hll * 2i32.pow(10) as f64 * 6.0).expect("error writing hll mvp");
+    writeln!(writer, "ull mvp: {}", var_ull * 2i32.pow(10) as f64* 8.0).expect("error writing ull mvp");
+    writeln!(writer, "ell mvp: {}", var_ell * 2i32.pow(10) as f64 * 28.0).expect("error writing ell mvp");
     Ok(())
 }
