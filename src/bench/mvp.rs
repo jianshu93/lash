@@ -63,11 +63,20 @@ fn main() -> Result<(), Box<dyn Error>> {
             .help("output file name")
             .default_value("log")
             .action(ArgAction::Set),
+        )
+        .arg(
+            Arg::new("p")
+            .short('p')
+            .long("p")
+            .help("precision")
+            .value_parser(clap::value_parser!(usize))
+            .action(ArgAction::Set),
         ).get_matches();
 
     let input_file = matches.get_one::<String>("file").expect("required");
     let output_file = matches.get_one::<String>("output").expect("required");
     let num_seeds: usize = *matches.get_one::<usize>("seeds").expect("required");
+    let p = *matches.get_one::<usize>("p").expect("required");
 
     if num_seeds > 100 {
         panic!("Max 100 seeds each time")
@@ -105,9 +114,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     // fill the vectors: one sketch of each type per seed
     for _ in 0..num_seeds {
-        hlls.push(Mutex::new(HyperLogLog::<i64>::with_p(10)));
-        ulls.push(Mutex::new(UltraLogLog::new(10).expect("error creating ull")));
-        ells.push(Mutex::new(ExaLogLog::new(2, 20, 10).expect("error creating ell")));
+        hlls.push(Mutex::new(HyperLogLog::<i64>::with_p(p as u8)));
+        ulls.push(Mutex::new(UltraLogLog::new(p as u32).expect("error creating ull")));
+        ells.push(Mutex::new(ExaLogLog::new(2, 20, p as u32).expect("error creating ell")));
     }
 
     const CAPACITY: usize = 1 << 20;
@@ -120,14 +129,14 @@ fn main() -> Result<(), Box<dyn Error>> {
                 .map(|&m| xxh3_64_with_seed(&m.to_le_bytes(), *seed as u64))
                 .collect();
 
-                let mut h = hlls[j].lock().unwrap();
-                for &x in &hashes { h.push_hash64(x); }
-            
-                let mut u = ulls[j].lock().unwrap();
-                for &x in &hashes { u.add(x); }
-            
-                let mut e = ells[j].lock().unwrap();
-                for &x in &hashes { e.add_hash(x); }
+            let mut h = hlls[j].lock().unwrap();
+            for &x in &hashes { h.push_hash64(x); }
+        
+            let mut u = ulls[j].lock().unwrap();
+            for &x in &hashes { u.add(x); }
+        
+            let mut e = ells[j].lock().unwrap();
+            for &x in &hashes { e.add_hash(x); }
         }
         buf.clear();
     };
@@ -215,8 +224,8 @@ fn main() -> Result<(), Box<dyn Error>> {
     writeln!(writer, "ell mse: {}", var_ell).expect("error writing ell mse");
 
     writeln!(writer, "**************** MVP results ****************").expect("error writing mvp");
-    writeln!(writer, "hll mvp: {}", var_hll * 2i32.pow(10) as f64 * 6.0).expect("error writing hll mvp");
-    writeln!(writer, "ull mvp: {}", var_ull * 2i32.pow(10) as f64* 8.0).expect("error writing ull mvp");
-    writeln!(writer, "ell mvp: {}", var_ell * 2i32.pow(10) as f64 * 28.0).expect("error writing ell mvp");
+    writeln!(writer, "hll mvp: {}", var_hll * 2i32.pow(p as u32) as f64 * 6.0).expect("error writing hll mvp");
+    writeln!(writer, "ull mvp: {}", var_ull * 2i32.pow(p as u32) as f64* 8.0).expect("error writing ull mvp");
+    writeln!(writer, "ell mvp: {}", var_ell * 2i32.pow(p as u32) as f64 * 28.0).expect("error writing ell mvp");
     Ok(())
 }
