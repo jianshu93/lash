@@ -78,10 +78,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     let num_seeds: usize = *matches.get_one::<usize>("seeds").expect("required");
     let p = *matches.get_one::<usize>("p").expect("required");
 
-    if num_seeds > 100 {
-        panic!("Max 100 seeds each time")
-    }
-
     let mut rng = rand::rng();
     let seeds: Vec<usize> = index::sample(&mut rng, 101, num_seeds).into_vec();
 
@@ -183,29 +179,28 @@ fn main() -> Result<(), Box<dyn Error>> {
     sketch_writer.flush()?;
 
     let mut hll_cards = Vec::<f64>::new();
-    let mut ull_cards = Vec::<f64>::new();
+    let mut ull_mle_cards = Vec::<f64>::new();
+    let mut ull_fgra_cards = Vec::<f64>::new();
     let mut ell_cards = Vec::<f64>::new();
 
     for i in 0..num_seeds {
-        writeln!(writer, "-------------- seed number {} --------------", i).expect("error writing to output");
-        let hll_card = hlls[i].lock().unwrap().len();
-        writeln!(writer, "hll cardinality: {}", hll_card).expect("error writing hll result");
-        hll_cards.push(hll_card);
+        //writeln!(writer, "hll cardinality: {}", hll_card).expect("error writing hll result");
+        hll_cards.push(hlls[i].lock().unwrap().len());
 
-        let ull_card = MaximumLikelihoodEstimator.estimate(&ulls[i].lock().unwrap());
-        writeln!(writer, "ull cardinality: {}", ull_card).expect("error writing ull result");
-        ull_cards.push(ull_card);
+        let ull = ulls[i].lock().unwrap();
+        //writeln!(writer, "ull cardinality: mle: {}, fgra: {}", ull_mle_card, ull_fgra_card).expect("error writing ull result");
+        ull_mle_cards.push(MaximumLikelihoodEstimator.estimate(&ull));
+        ull_fgra_cards.push(ull.get_distinct_count_estimate());
 
-        let ell_card = ells[i].lock().unwrap().estimate();
-        writeln!(writer, "ell cardinality: {}", ell_card).expect("error writing ell result");
-        ell_cards.push(ell_card);
+        //writeln!(writer, "ell cardinality: {}", ell_card).expect("error writing ell result");
+        ell_cards.push(ells[i].lock().unwrap().estimate());
     }
     
     // calculate true cardinality
     let true_unique: u64 = seen
-    .iter()
-    .map(|w| w.load(Ordering::Relaxed).count_ones() as u64)
-    .sum();
+        .iter()
+        .map(|w| w.load(Ordering::Relaxed).count_ones() as u64)
+        .sum();
 
     writeln!(writer, "**************** True cardinality: {} ****************", true_unique).expect("error writing to file");
 
@@ -214,18 +209,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         estimates.iter().map(|e| ((e - truth) / truth).powi(2)).sum::<f64>() / n
     }
 
-    let var_hll = mse(hll_cards, true_unique as f64);
-    let var_ull = mse(ull_cards, true_unique as f64);
-    let var_ell = mse(ell_cards, true_unique as f64);
+    let mse_hll = mse(hll_cards, true_unique as f64);
+    let mse_mle_ull = mse(ull_mle_cards, true_unique as f64);
+    let mse_fgra_ull = mse(ull_fgra_cards, true_unique as f64);
+    let mse_ell = mse(ell_cards, true_unique as f64);
 
     writeln!(writer, "**************** MSE results ****************").expect("error writing to log file");
-    writeln!(writer, "hll mse: {}", var_hll).expect("error writing hll mse");
-    writeln!(writer, "ull mse: {}", var_ull).expect("error writing ull mse");
-    writeln!(writer, "ell mse: {}", var_ell).expect("error writing ell mse");
+    writeln!(writer, "hll mse: {}", mse_hll).expect("error writing hll mse");
+    writeln!(writer, "ull mle mse: {}", mse_mle_ull).expect("error writing ull mse");
+    writeln!(writer, "ull fgra mse: {}", mse_fgra_ull).expect("error writing ull mse");
+    writeln!(writer, "ell mse: {}", mse_ell).expect("error writing ell mse");
 
     writeln!(writer, "**************** MVP results ****************").expect("error writing mvp");
-    writeln!(writer, "hll mvp: {}", var_hll * 2i32.pow(p as u32) as f64 * 6.0).expect("error writing hll mvp");
-    writeln!(writer, "ull mvp: {}", var_ull * 2i32.pow(p as u32) as f64* 8.0).expect("error writing ull mvp");
-    writeln!(writer, "ell mvp: {}", var_ell * 2i32.pow(p as u32) as f64 * 28.0).expect("error writing ell mvp");
+    writeln!(writer, "hll mvp: {}", mse_hll * 2i32.pow(p as u32) as f64 * 6.0).expect("error writing hll mvp");
+    writeln!(writer, "ull mle mvp: {}", mse_mle_ull * 2i32.pow(p as u32) as f64* 8.0).expect("error writing ull mvp");
+    writeln!(writer, "ull fgra mvp: {}", mse_fgra_ull * 2i32.pow(p as u32) as f64* 8.0).expect("error writing ull mvp");
+    writeln!(writer, "ell mvp: {}", mse_ell * 2i32.pow(p as u32) as f64 * 28.0).expect("error writing ell mvp");
     Ok(())
 }
