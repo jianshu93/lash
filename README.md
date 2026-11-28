@@ -133,4 +133,4 @@ lash dist -q ./qry_skh -r ./ref_skh -t 8 -o dist.txt
 Output format is the same with Mash/BinDash, first column query, second column reference name， third column Mash distance
 
 ## References
-Zhao, J., Wang, C., Weng, Y., Xia, R., Gonzalez, A. and Knight, R. (2026) ‘Even more space efficient genome sketching with Lash’, bioRxiv [Preprint]. Available at: https://doi.org/10.64898/2026.11.12.764074.
+Zhao, J., Wang, C., Weng, Y., Xia, R., Gonzalez, A. and Knight, R. (2026) Even more space efficient genome sketching with Lash, bioRxiv [Preprint]. Available at: https://doi.org/10.64898/2026.11.12.764074.
